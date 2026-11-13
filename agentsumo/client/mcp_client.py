@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import asyncio
 import logging
+import sys
 from datetime import datetime
 
 
@@ -53,7 +54,7 @@ class SUMOMCPClient:
     
     def __init__(
         self,
-        python_path: str = "python",
+        python_path: str = sys.executable,
         connection_timeout: float = 10.0,
         tool_timeout: float = 300.0,
         max_retries: int = 3,
@@ -62,7 +63,10 @@ class SUMOMCPClient:
     ):
         """
         Args:
-            python_path: Path to the Python executable
+            python_path: Python executable that launches the MCP server.
+                Defaults to the interpreter running this client, so the server
+                sees the same site-packages. A bare "python" would resolve via
+                PATH and can pick up an unrelated environment (e.g. conda base).
             connection_timeout: Connection timeout in seconds
             tool_timeout: Tool execution timeout in seconds
             max_retries: Maximum number of retries
