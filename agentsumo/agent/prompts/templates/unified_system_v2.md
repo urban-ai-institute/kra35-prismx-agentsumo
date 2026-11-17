@@ -137,7 +137,8 @@ Route files contain explicit edge lists. If edges are deleted from the network, 
 When calling `xml_to_sqlite_tool`, you MUST always provide both `simulation_id` and `description`. These are displayed in the UI for scenario comparison — without them, users cannot distinguish simulations and comparison queries become impossible.
 
 **simulation_id format:** `{N}_{scenario_name}`
-- N = sequential number (check current simulations in context to determine the next number)
+- N = sequential number: continue after the highest N among the current DB's simulations listed in the context
+- Reusing an existing simulation_id REPLACES that simulation's stored results, so only reuse one when the user wants a scenario re-run
 - scenario_name = short English descriptor
 - Examples: `1_baseline`, `2_road_closure_teheran`, `3_lane_reduction_gangnam`
 
@@ -364,7 +365,7 @@ After `sumo_runner`, the following tables are available via `read_query`:
 - arrival (s), arrivalLane, arrivalPos (m), arrivalSpeed (m/s)
 - duration (s), routeLength (m), waitingTime (s), waitingCount, stopTime (s), timeLoss (s)
 - rerouteNo, devices, vType, speedFactor, vaporized
-- CO_abs (mg), CO2_abs (mg), HC_abs (mg), PMx_abs (mg), NOx_abs (mg), fuel_abs (ml), electricity_abs (Wh)
+- CO_abs (mg), CO2_abs (mg), HC_abs (mg), PMx_abs (mg), NOx_abs (mg), fuel_abs (mg), electricity_abs (Wh)
 
 **edge_metrics** (PK: simulation_id, edge_id, interval_begin) — Per-edge aggregated data from edgeData output:
 - edge_id, interval_begin (s), interval_end (s)
@@ -375,6 +376,7 @@ After `sumo_runner`, the following tables are available via `read_query`:
 - Emission totals: CO_abs, CO2_abs, HC_abs, PMx_abs, NOx_abs, fuel_abs, electricity_abs
 - Emission per-meter: CO_normed, CO2_normed, HC_normed, PMx_normed, NOx_normed, fuel_normed, electricity_normed
 - Emission per-vehicle: CO_perVeh, CO2_perVeh, HC_perVeh, PMx_perVeh, NOx_perVeh, fuel_perVeh, electricity_perVeh
+- Values SUMO did not write are NULL, not 0: an edge no vehicle used has NULL speed/traveltime/timeLoss. Add `IS NOT NULL` when ranking ascending (NULL sorts first); use COALESCE(density, 0) for averages over all edges
 
 **Query Examples:**
 ```sql

@@ -273,7 +273,10 @@ def sumo_runner(
     - output_files: List of result file paths [tripinfo, edgedata, edgedata_emission]
     - summary_xml: Path to summary.xml file. ALWAYS pass this to xml_to_sqlite_tool(summary_xml=...) for dashboard time-series charts.
     - replay_file: JSON file for web visualization replay
+    - sumo_log: SUMO's own messages (warnings and errors) for this run
     - simulation_time: Wall-clock execution time in seconds
+    On failure, status is "error", the message carries SUMO's error lines, and
+    output_files/summary_xml are empty: fix the input instead of converting.
     """
     return simulation_runner.run(
         net_file=net_file, trip_file=trip_file, route_file=route_file,
@@ -299,7 +302,7 @@ def edge_edit_tool(
 
     ⚠️🚨 CRITICAL: After using this tool, you MUST regenerate trips and routes!
     Route files contain explicit edge lists - if those edges are deleted, the route file becomes INVALID!
-    Workflow: edge_edit → trip_generate → route_generate → sumo_runner (REQUIRED!)
+    Workflow: edge_edit_tool → trip_generate → route_generate → sumo_runner (REQUIRED!)
 
     🌟 REALISTIC USAGE: Specify reference_location + radius_km for partial road closure!
 
@@ -360,7 +363,7 @@ def reduce_lanes_tool(
     Reduce lanes on road segments with two modes.
 
     ✅ Trip file can be reused - edges still exist, only lane count changed.
-    Workflow: reduce_lanes → sumo_runner (reuse existing trip file)
+    Workflow: reduce_lanes_tool → sumo_runner (reuse existing trip file)
 
     **MODE 1: Relative Reduction (RECOMMENDED for most policies)**
     - reduce_by: Reduce N lanes from each segment
@@ -427,7 +430,7 @@ def speed_limit_edit_tool(
     Modify speed limits on specific road segments (supports partial application).
 
     ✅ Trip file can be reused - edges still exist, only speed limit changed.
-    Workflow: speed_limit_edit → sumo_runner (reuse existing trip file)
+    Workflow: speed_limit_edit_tool → sumo_runner (reuse existing trip file)
 
     REALISTIC USAGE: Use reference_location + radius_km for localized speed limit changes!
 
@@ -856,7 +859,7 @@ def xml_to_sqlite_tool(
             - Check current simulations in context to determine N.
             - Use short, descriptive English names.
             - Examples: "1_baseline", "2_road_closure_teheran", "3_lane_reduction_gangnam",
-              "4_tls_optimize_seocho", "5_speed_limit_gangnam"
+              "4_tls_offset_seocho", "5_speed_limit_gangnam"
             - An existing simulation_id is REPLACED (all its rows deleted, then
               re-imported; the result has "replaced": true). Use the next N for a
               new scenario. Without simulation_id a new sim_<timestamp> id is created.

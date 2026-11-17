@@ -9,7 +9,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2511.06804-b31b1b.svg)](https://arxiv.org/abs/2511.06804)
 [![Docs](https://readthedocs.org/projects/agentsumo/badge/?version=latest)](https://agentsumo.readthedocs.io/en/latest/?badge=latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-agentsumo--mcp-purple.svg)](https://registry.modelcontextprotocol.io/v0/servers?search=agentsumo)
 
 <img src="assets/hero_overview.png" alt="AgentSUMO overview" width="850"/>
@@ -82,7 +82,7 @@ The AgentSUMO MCP Server exposes **26 tools** grouped into five capability categ
 
 ### Requirements
 
-- Python 3.10 or later
+- Python 3.12
 - [SUMO](https://eclipse.dev/sumo/) 1.24 or later (locally installed, with `SUMO_HOME` set)
 - [Node.js](https://nodejs.org/) 18 or later with `npx` on `PATH`, for the Filesystem MCP Server (`@modelcontextprotocol/server-filesystem`, downloaded by `npx` on first run). Without it the agent still starts, but cannot read the additional-file guides, write rerouter / VSS / vType files, or inspect Real OD CSVs
 - Anthropic Claude API key (bring-your-own-key)
@@ -241,7 +241,7 @@ uv pip install -e . --upgrade
 
 Full documentation lives at **[agentsumo.readthedocs.io](https://agentsumo.readthedocs.io)**.
 
-- [Installation](https://agentsumo.readthedocs.io/en/latest/installation.html) — SUMO, Python 3.10+, environment setup
+- [Installation](https://agentsumo.readthedocs.io/en/latest/installation.html) — SUMO, Python 3.12, environment setup
 - [Tools](https://agentsumo.readthedocs.io/en/latest/mcp_servers/agentsumo/index.html) — reference for all MCP tools
 - [Schema](https://agentsumo.readthedocs.io/en/latest/database/index.html) — `simulations.db` ER diagram and column reference
 - [Tutorials](https://agentsumo.readthedocs.io/en/latest/tutorials/index.html) — walkthroughs of the paper case studies
