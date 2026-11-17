@@ -812,6 +812,9 @@ def xml_to_sqlite_tool(
     - edge_metrics: (simulation_id, edge_id, interval_begin, interval_end, speed, density, waitingTime,
                      timeLoss, occupancy, entered, left, ...)
       * PRIMARY KEY: (simulation_id, edge_id, interval_begin)
+      * Metrics SUMO did not measure are NULL (speed, traveltime, density, timeLoss, emissions, ...
+        on edges no vehicle used). AVG() skips them; SQLite sorts NULL first in ascending
+        order, so add "speed IS NOT NULL" when ranking the slowest edges.
     - network_state: (simulation_id, time, running, halting, waiting, meanSpeed, meanSpeedRelative, ...)
       * Network-wide time-series from summary.xml — 1 row per simulation second
       * Enables temporal analysis: congestion onset, performance curves, before/after comparison
@@ -854,6 +857,9 @@ def xml_to_sqlite_tool(
             - Use short, descriptive English names.
             - Examples: "1_baseline", "2_road_closure_teheran", "3_lane_reduction_gangnam",
               "4_tls_optimize_seocho", "5_speed_limit_gangnam"
+            - An existing simulation_id is REPLACED (all its rows deleted, then
+              re-imported; the result has "replaced": true). Use the next N for a
+              new scenario. Without simulation_id a new sim_<timestamp> id is created.
         net_file: Path to network (.net.xml) file used in this simulation
         route_file: Path to route (.rou.xml) file used in this simulation
         description: REQUIRED — NEVER leave as None!
