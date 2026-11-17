@@ -65,7 +65,7 @@ html_theme_options = {
         "image_dark": "_static/logo_dark_backup.png",
         "alt_text": "AgentSUMO",
     },
-    "github_url": "https://github.com/mw-jeong/AgentSUMO",
+    "github_url": "https://github.com/urban-ai-institute/kra35-prismx-agentsumo",
     "icon_links": [
         {
             "name": "arXiv",
@@ -93,8 +93,8 @@ html_theme_options = {
 }
 
 html_context = {
-    "github_user": "mw-jeong",
-    "github_repo": "AgentSUMO",
+    "github_user": "urban-ai-institute",
+    "github_repo": "kra35-prismx-agentsumo",
     "github_version": "main",
     "doc_path": "docs",
     "default_mode": "dark",  # PyData Sphinx Theme template var: force dark by default

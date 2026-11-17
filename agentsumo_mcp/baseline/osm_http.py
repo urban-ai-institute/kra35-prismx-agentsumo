@@ -38,7 +38,7 @@ logger = logging.getLogger("agentsumo_mcp.osm_http")
 
 
 DEFAULT_USER_AGENT = (
-    "AgentSUMO-MCP/0.1.0 (+https://github.com/mw-jeong/agentsumo-mcp)"
+    "AgentSUMO-MCP (+https://github.com/urban-ai-institute/kra35-prismx-agentsumo)"
 )
 
 # Ordered mirror chain. Primary first; alternates tried on failure.

@@ -4,7 +4,7 @@
   "description": "MCP server for LLM-driven SUMO traffic simulation, scenario design, and result analysis.",
   "title": "AgentSUMO",
   "repository": {
-    "url": "https://github.com/mw-jeong/AgentSUMO",
+    "url": "https://github.com/urban-ai-institute/kra35-prismx-agentsumo",
     "source": "github"
   },
   "version": "0.1.3",

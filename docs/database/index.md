@@ -6,7 +6,7 @@ representation of simulation results. This page documents that schema so
 custom SQL workflows can sit alongside the agent's natural-language access.
 
 The schema is defined in
-[`agentsumo_mcp/analysis/xml_to_sqlite.py`](https://github.com/mw-jeong/AgentSUMO/blob/main/agentsumo_mcp/analysis/xml_to_sqlite.py)
+[`agentsumo_mcp/analysis/xml_to_sqlite.py`](https://github.com/urban-ai-institute/kra35-prismx-agentsumo/blob/main/agentsumo_mcp/analysis/xml_to_sqlite.py)
 (`_create_schema`). All six tables are keyed by a `simulation_id` so
 multiple runs coexist in the same file and can be compared through
 ordinary SQL `JOIN`.

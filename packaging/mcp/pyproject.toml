@@ -43,10 +43,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mw-jeong/AgentSUMO"
+Homepage = "https://github.com/urban-ai-institute/kra35-prismx-agentsumo"
 Documentation = "https://agentsumo.readthedocs.io"
-Repository = "https://github.com/mw-jeong/AgentSUMO"
-Issues = "https://github.com/mw-jeong/AgentSUMO/issues"
+Repository = "https://github.com/urban-ai-institute/kra35-prismx-agentsumo"
+Issues = "https://github.com/urban-ai-institute/kra35-prismx-agentsumo/issues"
 
 [project.scripts]
 agentsumo-mcp = "agentsumo_mcp.main:main"
