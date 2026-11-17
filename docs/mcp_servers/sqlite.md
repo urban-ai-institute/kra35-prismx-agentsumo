@@ -19,6 +19,14 @@ natural-language → SQL translation against `simulations.db`.
 
 ::::
 
+## Installation
+
+No separate setup is needed. `uv pip install -e .` installs the server from
+PyPI as the `mcp-server-sqlite` dependency, and AgentSUMO launches it with
+the same Python interpreter. The dependency is pinned to `>=2025.4.25`
+because earlier releases name the tools with hyphens (`read-query`), which
+do not match the tool names below.
+
 ## Tools used by AgentSUMO
 
 The server exposes six tools across three categories, matching the layout

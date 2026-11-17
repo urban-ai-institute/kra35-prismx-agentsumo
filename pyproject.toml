@@ -42,6 +42,10 @@ dependencies = [
     # agentsumo-mcp) and the low-level Server decorators (used by
     # mcp-server-sqlite), so neither server starts on 2.x.
     "mcp[cli]>=1.13.1,<2",
+    # SQLite MCP Server (Anthropic, archived upstream). 2025.4.25 is the first
+    # release with underscore tool names (read_query, ...); 0.6.x uses
+    # hyphens (read-query) and does not match the agent's prompts.
+    "mcp-server-sqlite>=2025.4.25",
 ]
 
 [build-system]

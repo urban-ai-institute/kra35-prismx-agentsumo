@@ -37,6 +37,12 @@ currently at framework version 0.1.0.
   mcp 2.x (August 2026) removed FastMCP, so on a fresh install the
   AgentSUMO MCP server failed to import and the agent had no SUMO
   tools. Existing environments with mcp 1.x were unaffected.
+- The SQLite MCP Server now installs from PyPI as the
+  `mcp-server-sqlite>=2025.4.25` dependency. The client used to launch
+  it from a `sqlite-mcp-server/` folder that was git-ignored and never
+  shipped, so on a fresh clone the connection failed, the agent logged
+  the error and continued, and every `read_query` call returned "SQLite
+  MCP is not connected".
 - `ensure_vehicle_types_default` surfaces an actionable
   `PermissionError` ("set AGENTSUMO_MCP_OUTPUT_BASE to a writable
   directory") instead of failing silently when the destination cannot
