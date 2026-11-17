@@ -3,6 +3,7 @@ Tests for trip/route/net generation error handling:
 1. Failed SUMO tools report their stderr, not only "non-zero exit status 1"
 2. RandomOD checks randomTrips' exit code, never returns a stale or partial
    file, and writes one file per traffic_condition
+3. Zone OD matches numeric zone ids in the CSV against the (string) TAZ ids
 Fake tools stand in for SUMO; tests that need real SUMO binaries are skipped
 when SUMO_HOME/bin/sumo is missing.
 """
@@ -195,3 +196,44 @@ def test_random_od_real_sumo_keeps_both_demand_levels(tmp_path):
     assert 0 < light["trip_count"] < heavy["trip_count"]
     # the light file is still the light demand after generating heavy
     assert len(ET.parse(light["trip_file"]).getroot().findall("trip")) == light["trip_count"]
+
+
+# ------------------------------------------------------------
+# 3. Zone OD ids
+# ------------------------------------------------------------
+
+TAZ_XML = """<tazs>
+    <taz id="101" edges="e1"/>
+    <taz id="0202" edges="e2"/>
+</tazs>
+"""
+
+
+def _taz_relation(tmp_path, csv_text):
+    taz = tmp_path / "x.taz.xml"
+    taz.write_text(TAZ_XML)
+    od = tmp_path / "od.csv"
+    od.write_text(csv_text)
+    out = tmp_path / "x.tazRelation.xml"
+    TripGenerator()._create_taz_relation(
+        str(od), str(taz), str(out),
+        {"zone_O": "zo", "zone_D": "zd", "O_time_relative": "t"},
+    )
+    return [r.attrib for r in ET.parse(out).getroot().iter("tazRelation")]
+
+
+def test_numeric_zone_ids_match_taz_ids(tmp_path):
+    rels = _taz_relation(tmp_path, "zo,zd,t\n101,0202,0\n101,0202,100\n0202,101,4000\n")
+    assert sorted((r["from"], r["to"], r["count"]) for r in rels) == [
+        ("0202", "101", "1"), ("101", "0202", "2")
+    ]
+
+
+def test_no_matching_zone_ids_is_a_clear_error(tmp_path):
+    with pytest.raises(ValueError, match="No OD row matched the zones"):
+        _taz_relation(tmp_path, "zo,zd,t\n7,8,0\n")
+
+
+def test_missing_zone_column_is_a_clear_error(tmp_path):
+    with pytest.raises(ValueError, match="Column 'zo'"):
+        _taz_relation(tmp_path, "origin,zd,t\n101,0202,0\n")

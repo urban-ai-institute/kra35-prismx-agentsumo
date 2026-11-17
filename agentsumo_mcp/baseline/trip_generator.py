@@ -302,12 +302,20 @@ class TripGenerator:
         column_mapping: Optional[Dict[str, str]] = None
     ) -> None:
         """Create tazRelation.xml from OD data with column mapping support."""
-        df = pd.read_csv(od_data_file)
-
         mapping = column_mapping or {}
         zone_o_col = mapping.get("zone_O", DEFAULT_ZONE_MAPPING["zone_O"])
         zone_d_col = mapping.get("zone_D", DEFAULT_ZONE_MAPPING["zone_D"])
         time_col = mapping.get("O_time_relative", DEFAULT_ZONE_MAPPING["O_time_relative"])
+
+        # TAZ ids are strings; read the zone columns as text so numeric ids
+        # (pandas would make them int64) and leading zeros still match.
+        df = pd.read_csv(od_data_file, dtype={zone_o_col: str, zone_d_col: str})
+        for key, col in {"zone_O": zone_o_col, "zone_D": zone_d_col, "O_time_relative": time_col}.items():
+            if col not in df.columns:
+                raise ValueError(
+                    f"Column '{col}' (mapped from '{key}') not found in CSV. "
+                    f"Available: {list(df.columns)}"
+                )
 
         tree = ET.parse(taz_file)
         root = tree.getroot()
@@ -319,8 +327,8 @@ class TripGenerator:
         for _, row in df.iterrows():
             try:
                 t = int(row[time_col])
-                o = row[zone_o_col]
-                d = row[zone_d_col]
+                o = str(row[zone_o_col]).strip()
+                d = str(row[zone_d_col]).strip()
                 if o not in valid_ids or d not in valid_ids:
                     continue
                 start = (t // interval_sec) * interval_sec
@@ -328,6 +336,14 @@ class TripGenerator:
                 intervals[(start, end)][(o, d)] += 1
             except Exception:
                 continue
+
+        if not intervals:
+            # od2trips would only fail with "no trips" on an empty <data/>
+            raise ValueError(
+                f"No OD row matched the zones from the shapefile. "
+                f"CSV zone ids (e.g. {df[zone_o_col].dropna().astype(str).unique()[:5].tolist()}) "
+                f"must equal the zone_id_column values (e.g. {sorted(valid_ids)[:5]})"
+            )
 
         root_xml = ET.Element("data")
         for idx, ((start, end), od_dict) in enumerate(sorted(intervals.items())):
