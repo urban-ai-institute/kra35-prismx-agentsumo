@@ -38,8 +38,10 @@ dependencies = [
     "ddgs>=9.0.0",
     "certifi>=2025.8.3",
     # MCP protocol library (also a transitive dep of agentsumo-mcp, but
-    # imported directly by agentsumo/client)
-    "mcp[cli]>=1.13.1",
+    # imported directly by agentsumo/client). mcp 2.x removed FastMCP (used by
+    # agentsumo-mcp) and the low-level Server decorators (used by
+    # mcp-server-sqlite), so neither server starts on 2.x.
+    "mcp[cli]>=1.13.1,<2",
 ]
 
 [build-system]

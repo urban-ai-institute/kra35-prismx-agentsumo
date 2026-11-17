@@ -33,6 +33,10 @@ currently at framework version 0.1.0.
   going forward.
 
 ### Fixed
+- `mcp` is pinned below 2.0 in both the framework and `agentsumo-mcp`.
+  mcp 2.x (August 2026) removed FastMCP, so on a fresh install the
+  AgentSUMO MCP server failed to import and the agent had no SUMO
+  tools. Existing environments with mcp 1.x were unaffected.
 - `ensure_vehicle_types_default` surfaces an actionable
   `PermissionError` ("set AGENTSUMO_MCP_OUTPUT_BASE to a writable
   directory") instead of failing silently when the destination cannot
