@@ -21,12 +21,12 @@
       "environmentVariables": [
         {
           "name": "SUMO_HOME",
-          "description": "Absolute path to the local SUMO installation directory (must contain bin/, share/, tools/).",
+          "description": "Absolute path to the local SUMO installation directory (must contain bin/; tools/ may sit directly inside it or under share/sumo/).",
           "isRequired": true
         },
         {
           "name": "AGENTSUMO_MCP_OUTPUT_BASE",
-          "description": "Base directory for simulation outputs (networks, trips, results). Defaults to the current working directory."
+          "description": "Base directory for simulation outputs (networks, trips, results). Defaults to the current working directory, or ~/agentsumo-output when it is not writable."
         }
       ]
     }

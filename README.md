@@ -166,7 +166,7 @@ SUMO_HOME=C:\Program Files (x86)\Eclipse\Sumo
 SUMO_HOME=/usr/share/sumo
 ```
 
-**`AGENTSUMO_MCP_OUTPUT_BASE`** (optional) — override the base directory where the MCP server writes simulation outputs (networks, trips, results). Defaults to the current working directory.
+**`AGENTSUMO_MCP_OUTPUT_BASE`** (optional) — override the base directory where the MCP server writes simulation outputs (networks, trips, results). Defaults to the current working directory, or `~/agentsumo-output` when that directory is not writable (MCP hosts such as Claude Desktop often start servers in `/`).
 ```
 AGENTSUMO_MCP_OUTPUT_BASE=/path/to/your/output/dir
 ```
