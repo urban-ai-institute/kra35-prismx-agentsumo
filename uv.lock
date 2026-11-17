@@ -29,6 +29,7 @@ dependencies = [
     { name = "rtree" },
     { name = "shapely" },
     { name = "sumolib" },
+    { name = "traci" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
 ]
@@ -57,6 +58,7 @@ requires-dist = [
     { name = "rtree", specifier = ">=1.0.0" },
     { name = "shapely", specifier = ">=2.1.1" },
     { name = "sumolib", specifier = ">=1.24.0" },
+    { name = "traci", specifier = ">=1.24.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
@@ -1111,10 +1113,23 @@ wheels = [
 
 [[package]]
 name = "sumolib"
-version = "1.24.0"
+version = "1.28.0"
 source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/06/87b2ece00c650531e3f776a809982e488a8f6a4dd109d7e810381c5d1583/sumolib-1.28.0.tar.gz", hash = "sha256:8547d6c699a9a97c00a539869f58676f7d8c70afa06a965b4af7f8a870739177", size = 142390, upload-time = "2026-10-08T09:33:39.811Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f0/35/9c524281aab9550187d638862ceb663cb2d31fe04bb630aeb109faf81432/sumolib-1.24.0-py3-none-any.whl", hash = "sha256:d4e8c0315dd240af60665cb7c0f34f876abf91daab73f53c17a5c8284c0acd5d", size = 278150, upload-time = "2025-07-22T16:02:15.915Z" },
+    { url = "https://files.pythonhosted.org/packages/97/3c/bb2ba08247793748be59bf93759d1452ed1201e6f143dc98fc51511c87d4/sumolib-1.28.0-py2.py3-none-any.whl", hash = "sha256:eda134defdcc39b966756cc00828ecbabfc35e0631326971f2fe1dea8acd9239", size = 236390, upload-time = "2026-10-08T09:33:37.547Z" },
+]
+
+[[package]]
+name = "traci"
+version = "1.28.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sumolib" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/04/f7/43e04a40da868af0fdc767d417ea27b89958d3b2ec0ae2de0860519e10f9/traci-1.28.0.tar.gz", hash = "sha256:f53483a7f3a15910b88579cfb4c72a8e304364e58a2b3f0a1acbcf460598c6b3", size = 103837, upload-time = "2026-10-08T10:42:32.77Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/a1/a95328ff82da409b46d5ed2723b70dff6a5445776ad95c34b5d1a84de7f2/traci-1.28.0-py2.py3-none-any.whl", hash = "sha256:cbc88b5b38b60c0dba4939f9171615a97bd12dd113c5bc7730d76dfe2db73881", size = 139433, upload-time = "2026-10-08T09:33:38.705Z" },
 ]
 
 [[package]]

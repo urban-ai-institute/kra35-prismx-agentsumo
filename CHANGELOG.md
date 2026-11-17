@@ -37,6 +37,9 @@ currently at framework version 0.1.0.
   mcp 2.x (August 2026) removed FastMCP, so on a fresh install the
   AgentSUMO MCP server failed to import and the agent had no SUMO
   tools. Existing environments with mcp 1.x were unaffected.
+- `traci` is now a declared dependency. sumolib bundled it up to 1.25;
+  from 1.26 it ships separately, so a fresh install had no `traci` and
+  every `sumo_runner` call failed with "No module named 'traci'".
 - The SQLite MCP Server now installs from PyPI as the
   `mcp-server-sqlite>=2025.4.25` dependency. The client used to launch
   it from a `sqlite-mcp-server/` folder that was git-ignored and never

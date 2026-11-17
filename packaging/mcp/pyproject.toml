@@ -28,6 +28,9 @@ dependencies = [
     # mcp 2.x removed FastMCP (agentsumo_mcp/main.py)
     "mcp[cli]>=1.13.1,<2",
     "sumolib>=1.24.0",
+    # TraCI drives sumo_runner. sumolib bundled it up to 1.25; from 1.26
+    # it is a separate package, so a fresh install had no traci at all.
+    "traci>=1.24.0",
     "geopy>=2.4.1",
     "geopandas>=0.14.3,<0.15.0",
     "pandas>=2.3.2",

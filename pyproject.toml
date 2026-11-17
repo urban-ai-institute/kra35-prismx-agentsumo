@@ -27,6 +27,9 @@ dependencies = [
     "folium>=0.20.0",
     # SUMO + XML
     "sumolib>=1.24.0",
+    # TraCI drives sumo_runner. sumolib bundled it up to 1.25; from 1.26
+    # it is a separate package, so a fresh install had no traci at all.
+    "traci>=1.24.0",
     "lxml>=5.0.0",
     "rtree>=1.0.0",
     "osmium>=4.1.1",
