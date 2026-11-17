@@ -743,13 +743,12 @@ class AgentSUMO:
                     logger.warning(f"net_convert: net_file is None. Full result. {result_dict}")
                     return
 
+                # net_convert builds a new base network (new area or rebuild),
+                # so it becomes the baseline for later policy comparisons.
+                # Policy tools change only current_network.
                 self.simulation_state["current_network"] = net_file
-                # Set baseline if not already set (first network generation)
-                if not self.simulation_state.get("baseline_network"):
-                    self.simulation_state["baseline_network"] = net_file
-                    logger.info(f"Baseline network set: {net_file}")
-                else:
-                    logger.info(f"Current network updated: {net_file}")
+                self.simulation_state["baseline_network"] = net_file
+                logger.info(f"Baseline network set: {net_file}")
 
             elif tool_name == "trip_generate":
                 if result_dict.get("trip_file"):

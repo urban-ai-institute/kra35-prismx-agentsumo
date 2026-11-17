@@ -141,3 +141,17 @@ def test_lane_reduction_keeps_current_routes(agent, tmp_path):
     }))
 
     assert agent.simulation_state["current_routes"] == before["current_routes"]
+
+
+def test_each_net_convert_becomes_the_baseline(agent):
+    agent._update_state("net_convert", _result({"status": "success", "net_file": "/o/networks/gangnam.net.xml"}))
+    agent._update_state("reduce_lanes_tool", _result({"status": "success", "net_file": "/o/networks/gangnam_lanes.net.xml"}))
+    assert agent.simulation_state["baseline_network"] == "/o/networks/gangnam.net.xml"
+
+    # New area: the new base network replaces the old baseline
+    agent._update_state("net_convert", _result({"status": "success", "net_file": "/o/networks/hongdae.net.xml"}))
+
+    assert agent.simulation_state["baseline_network"] == "/o/networks/hongdae.net.xml"
+    assert agent.simulation_state["current_network"] == "/o/networks/hongdae.net.xml"
+    context = agent.prompt_builder.format_context(agent.simulation_state)
+    assert "<baseline_network>/o/networks/hongdae.net.xml</baseline_network>" in context
