@@ -35,6 +35,21 @@ DEFAULT_ZONE_MAPPING = {
 }
 
 
+def _tool_error(name: str, result: subprocess.CompletedProcess, max_chars: int = 2000) -> str:
+    """Error message for a failed SUMO tool, ending with the tail of its output."""
+    output = (result.stderr or result.stdout or "").strip()
+    if len(output) > max_chars:
+        output = "..." + output[-max_chars:].split("\n", 1)[-1]
+    return f"{name} failed (exit code {result.returncode}): {output or 'no output'}"
+
+
+def _run_tool(name: str, cmd: list) -> None:
+    """Run a SUMO tool; on failure raise with its stderr instead of only the exit code."""
+    result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    if result.returncode != 0:
+        raise RuntimeError(_tool_error(name, result))
+
+
 class TripGenerator:
     """Trip demand generation for SUMO simulations."""
 
@@ -183,7 +198,7 @@ class TripGenerator:
 
         # 1. polyconvert (shp → poly.xml)
         polyconvert_path = self.environment.get_binary_path("polyconvert")
-        subprocess.run([
+        _run_tool("polyconvert", [
             polyconvert_path,
             "-n", net_file,
             "--shapefile", zone_shp_file[:-4] if zone_shp_file.endswith('.shp') else zone_shp_file,
@@ -191,29 +206,29 @@ class TripGenerator:
             "--type", "taz",
             "--proj.utm", "true",
             "-o", poly_path
-        ], check=True, capture_output=True)
+        ])
 
         # 2. edgesInDistricts (poly.xml → taz.xml)
         edgesInDistricts_path = self.environment.get_tool_path("edgesInDistricts.py")
-        subprocess.run([
+        _run_tool("edgesInDistricts.py", [
             sys.executable, edgesInDistricts_path,
             "-n", net_file,
             "-t", poly_path,
             "-o", taz_path
-        ], check=True, capture_output=True)
+        ])
 
         # 3. Create tazRelation.xml from OD data
         self._create_taz_relation(od_data_file, taz_path, tazRelation_path, column_mapping)
 
         # 4. od2trips
         od2trips_path = self.environment.get_binary_path("od2trips")
-        subprocess.run([
+        _run_tool("od2trips", [
             od2trips_path,
             "--taz-files", taz_path,
             "--tazrelation-files", tazRelation_path,
             "-o", trip_file,
             "--vtype", "passenger"
-        ], check=True, capture_output=True)
+        ])
 
         tree = ET.parse(trip_file)
         return len(tree.getroot().findall(".//trip"))
