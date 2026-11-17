@@ -344,7 +344,7 @@ class SUMOMCPClient:
             "connected": self._connected,
             "connection_attempts": self._connection_attempts,
             "last_error": self._last_error,
-            "server_file": str(self.server_file),
+            "server_module": self.server_module,
             "connection_timeout": self.connection_timeout,
             "tool_timeout": self.tool_timeout,
             "max_retries": self.max_retries

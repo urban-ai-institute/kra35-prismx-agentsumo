@@ -2,6 +2,7 @@
 Tests for the MCP client classes used by the agent (no network needed):
 1. A failed Filesystem MCP connection unwinds what it opened, so clients
    opened before it still shut down cleanly
+2. SUMOMCPClient.get_stats() works
 """
 
 import asyncio
@@ -15,6 +16,7 @@ import pytest
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from agentsumo.client import SUMOMCPClient
 from agentsumo.client.filesystem_mcp_client import FilesystemMCPClient
 from agentsumo.client.sqlite_mcp_client import SQLiteMCPClient
 
@@ -57,3 +59,10 @@ def test_failed_filesystem_connect_leaves_no_open_scopes(tmp_path, monkeypatch, 
     # Filesystem cancel scopes ("Error while closing connection ...")
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING], \
         [r.getMessage() for r in caplog.records]
+
+
+def test_sumo_client_get_stats():
+    stats = SUMOMCPClient(enable_logging=False).get_stats()
+
+    assert stats["connected"] is False
+    assert stats["server_module"] in ("agentsumo.server.main", "agentsumo_mcp.main")
