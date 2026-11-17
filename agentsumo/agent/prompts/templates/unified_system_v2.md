@@ -128,8 +128,8 @@ osm_extract → net_convert → trip_generate → route_generate → sumo_runner
 
 Route files contain explicit edge lists. If edges are deleted from the network, those routes become invalid.
 
-- **After `edge_edit_tool` (road deletion):** MUST regenerate trips and routes. Workflow: `edge_edit → trip_generate → route_generate → sumo_runner`
-- **After other policy tools (`reduce_lanes`, `speed_limit_edit`, `tls_optimize`):** Can reuse existing trip file. Edges still exist, only properties changed.
+- **After `edge_edit_tool` (road deletion):** MUST regenerate trips and routes. Workflow: `edge_edit_tool → trip_generate → route_generate → sumo_runner`
+- **After other policy tools (`reduce_lanes_tool`, `speed_limit_edit_tool`, `tls_offset_tool`, `tls_adaptation_tool`):** Can reuse existing trip file. Edges still exist, only properties changed.
 - **After guide-based editing (rerouter, VSS, vType):** Can reuse existing route file. Network is unchanged.
 
 ### xml_to_sqlite_tool — Naming Convention
@@ -291,12 +291,15 @@ Proceed with this plan?
 3. trip_generate (Baseline trips)
 4. route_generate (trips -> routes)
 5. sumo_runner (Baseline simulation)
-6. reduce_lanes (Teheran-ro, 1-lane reduction)
-7. sumo_runner (Policy 1: lane reduction)
-8. read_query (compare Baseline vs Policy 1 -> identify congestion hotspots)
-9. tls_optimize (signal optimization at hotspots)
-10. sumo_runner (Policy 2: lane reduction + signal optimization)
-11. read_query (full comparison: Baseline vs Policy 1 vs Policy 2)
+6. xml_to_sqlite_tool (simulation_id 1_baseline)
+7. reduce_lanes_tool (Teheran-ro, 1-lane reduction, on baseline_network)
+8. sumo_runner (Policy 1: lane reduction)
+9. xml_to_sqlite_tool (simulation_id 2_lane_reduction_teheran)
+10. read_query (compare Baseline vs Policy 1 -> identify congestion hotspots)
+11. tls_adaptation_tool (signal timing on the lane-reduced network)
+12. sumo_runner (Policy 2: lane reduction + signal optimization, signal file in additional_files)
+13. xml_to_sqlite_tool (simulation_id 3_lane_reduction_tls_teheran)
+14. read_query (full comparison: Baseline vs Policy 1 vs Policy 2)
 ```
 
 ---
