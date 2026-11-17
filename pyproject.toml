@@ -59,8 +59,15 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agentsumo*"]
+# Not "agentsumo*": that also matches agentsumo_mcp, which the agentsumo-mcp
+# dependency installs, and the two distributions would own the same files.
+include = ["agentsumo", "agentsumo.*"]
 exclude = ["data*", "output*", "checkpoints*", "tests*", "__pycache__*", "*.egg-info*", "sumo_mcp*", "examples*"]
 
 [tool.setuptools.package-data]
-agentsumo = ["*.txt", "*.json", "*.xml"]
+agentsumo = [
+    "*.txt", "*.json", "*.xml",
+    # Prompt template and additional-file guides read at runtime
+    "agent/prompts/templates/*.md",
+    "agent/additional_files_guide/*.md",
+]
