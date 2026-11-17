@@ -176,3 +176,26 @@ def test_sqlite_reconnects_when_current_db_changes(world, tmp_path):
     assert tool_names.count("read_query") == 1
     assert world["closed"] == ["sqlite", "sqlite", "filesystem", "sumo"]
     assert world["stack"] == []
+
+
+def test_agent_starts_without_filesystem_mcp(world, tmp_path, monkeypatch):
+    db = _make_db(tmp_path / "gangnam_analysis.db")
+
+    class NoNode(FakeClient):
+        async def __aenter__(self):
+            raise RuntimeError("Filesystem MCP Server connection failed - [Errno 2] No such file or directory: 'npx'")
+
+    monkeypatch.setattr(filesystem_module, "FilesystemMCPClient", lambda *a, **k: NoNode("filesystem", world))
+
+    async def run():
+        agent = _agent(tmp_path)
+        await agent.start(db_path=db)
+        names = [t["name"] for t in agent.tools]
+        await agent.close()
+        return agent, names
+
+    agent, names = asyncio.run(run())
+
+    assert "net_convert" in names and "read_query" in names
+    assert "read_text_file" not in names
+    assert world["closed"] == ["sqlite", "sumo"]

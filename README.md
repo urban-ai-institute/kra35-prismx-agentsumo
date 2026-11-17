@@ -84,6 +84,7 @@ The AgentSUMO MCP Server exposes **26 tools** grouped into five capability categ
 
 - Python 3.10 or later
 - [SUMO](https://eclipse.dev/sumo/) 1.24 or later (locally installed, with `SUMO_HOME` set)
+- [Node.js](https://nodejs.org/) 18 or later with `npx` on `PATH`, for the Filesystem MCP Server (`@modelcontextprotocol/server-filesystem`, downloaded by `npx` on first run). Without it the agent still starts, but cannot read the additional-file guides, write rerouter / VSS / vType files, or inspect Real OD CSVs
 - Anthropic Claude API key (bring-your-own-key)
 - Mapbox access token (used by the web map renderer)
 

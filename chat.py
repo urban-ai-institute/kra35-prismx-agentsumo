@@ -21,6 +21,24 @@ load_dotenv(Path(__file__).parent / ".env")
 from agentsumo import AgentSUMO
 
 
+def filesystem_directories():
+    """
+    Directories the Filesystem MCP may read and write.
+
+    - additional_files_guide/: rerouter, VSS and vType guides the agent reads
+      before writing SUMO additional files
+    - the output directory the MCP tools write to (AGENTSUMO_MCP_OUTPUT_BASE
+      or the current directory, + output/): new additional files go to
+      output/additional/, vehicle_types.add.xml lives in output/simulations/,
+      and Real OD CSVs to inspect can be placed in output/uploads/
+    """
+    import agentsumo.agent
+    from agentsumo_mcp.utils.path_utils import get_output_path
+
+    guides = Path(agentsumo.agent.__file__).parent / "additional_files_guide"
+    return [str(guides), str(get_output_path("output"))]
+
+
 async def main(debug=False):
     """
     Start the CLI chat.
@@ -36,7 +54,13 @@ async def main(debug=False):
     print("\nInitializing...")
 
     try:
-        async with AgentSUMO(enable_debug=debug) as agent:
+        # The Filesystem MCP runs through npx (Node.js). If it cannot start,
+        # the agent logs a warning and continues without file tools.
+        async with AgentSUMO(
+            enable_debug=debug,
+            enable_filesystem_mcp=True,
+            filesystem_directories=filesystem_directories()
+        ) as agent:
             print("\nAgentSUMO is ready.")
             print("\nCommands.")
             print("  - 'quit' or 'exit' to quit")

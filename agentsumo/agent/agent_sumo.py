@@ -212,6 +212,7 @@ class AgentSUMO:
             try:
                 from agentsumo.client.filesystem_mcp_client import FilesystemMCPClient
 
+                # The first run downloads the server through npx, which can take a while
                 logger.info(f"Connecting to Filesystem MCP Server... (dirs. {self._filesystem_directories})")
                 await self._open_client("filesystem", FilesystemMCPClient(self._filesystem_directories))
 
@@ -219,7 +220,10 @@ class AgentSUMO:
                 logger.info(f"Filesystem MCP: {len(filesystem_tools)} tools")
 
             except Exception as e:
-                logger.error(f"Filesystem MCP connection failed. {e}. Continuing.")
+                logger.warning(
+                    f"Filesystem MCP connection failed. {e}. Continuing without file tools "
+                    f"(the server needs Node.js/npx; guide-based editing and OD file inspection are unavailable)."
+                )
         elif self._enable_filesystem_mcp:
             logger.warning("Filesystem MCP enabled but filesystem_directories not specified.")
 
@@ -717,10 +721,11 @@ class AgentSUMO:
             return await self.mcp_clients["sqlite"].call_tool(tool_name, tool_input)
 
         # Filesystem MCP tools
-        # Mirror the 13 tools exposed by @modelcontextprotocol/server-filesystem
-        # (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
+        # Mirror the tools exposed by @modelcontextprotocol/server-filesystem
+        # (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem),
+        # including read_file, the deprecated alias of read_text_file it still lists
         filesystem_tool_names = [
-            "read_text_file", "read_media_file", "read_multiple_files",
+            "read_text_file", "read_file", "read_media_file", "read_multiple_files",
             "write_file", "edit_file", "create_directory",
             "list_directory", "list_directory_with_sizes", "directory_tree",
             "move_file", "search_files", "get_file_info",
