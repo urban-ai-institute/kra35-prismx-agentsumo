@@ -6,6 +6,7 @@ Version 0.1: Basic version with chat + tool calling
 
 import anthropic
 from typing import List, Dict, Any, Optional, Callable
+import asyncio
 import json
 import logging
 import re
@@ -103,6 +104,10 @@ class AgentSUMO:
             "sqlite": None,   # SQLite MCP Server (optional)
             "filesystem": None  # Filesystem MCP Server (optional, for ablation)
         }
+        # Names of the connected clients in the order they were opened. Each
+        # client holds anyio cancel scopes, which must be exited in reverse
+        # order, so close() walks this list backwards.
+        self._client_open_order: List[str] = []
         self.tools: List[Dict] = []
 
         # Conversation history (official multi-turn pattern)
@@ -185,8 +190,7 @@ class AgentSUMO:
         sumo_tools = []
         if self._enable_sumo_mcp:
             logger.info("Connecting to SUMO MCP Server...")
-            self.mcp_clients["sumo"] = SUMOMCPClient(tool_timeout=86400.0)
-            await self.mcp_clients["sumo"].__aenter__()
+            await self._open_client("sumo", SUMOMCPClient(tool_timeout=86400.0))
 
             sumo_tools = await self.mcp_clients["sumo"].list_tools()
             logger.info(f"SUMO MCP: {len(sumo_tools)} tools")
@@ -237,8 +241,7 @@ class AgentSUMO:
                     from agentsumo.client.sqlite_mcp_client import SQLiteMCPClient
 
                     logger.info(f"Connecting to SQLite MCP Server... (DB. {db_path})")
-                    self.mcp_clients["sqlite"] = SQLiteMCPClient(db_path)
-                    await self.mcp_clients["sqlite"].__aenter__()
+                    await self._open_client("sqlite", SQLiteMCPClient(db_path))
 
                     sqlite_tools = await self.mcp_clients["sqlite"].list_tools()
 
@@ -262,8 +265,7 @@ class AgentSUMO:
                 from agentsumo.client.filesystem_mcp_client import FilesystemMCPClient
 
                 logger.info(f"Connecting to Filesystem MCP Server... (dirs. {self._filesystem_directories})")
-                self.mcp_clients["filesystem"] = FilesystemMCPClient(self._filesystem_directories)
-                await self.mcp_clients["filesystem"].__aenter__()
+                await self._open_client("filesystem", FilesystemMCPClient(self._filesystem_directories))
 
                 filesystem_tools = await self.mcp_clients["filesystem"].list_tools()
                 logger.info(f"Filesystem MCP: {len(filesystem_tools)} tools")
@@ -284,23 +286,45 @@ class AgentSUMO:
         """Shut down the agent. Close all MCP connections."""
         logger.info("AgentSUMO shutting down...")
 
-        import asyncio
-
-        for name, client in self.mcp_clients.items():
-            if client:
-                try:
-                    # Attempt shutdown with a 5-second timeout
-                    await asyncio.wait_for(
-                        client.__aexit__(None, None, None),
-                        timeout=5.0
-                    )
-                    logger.info(f"{name} MCP connection closed")
-                except asyncio.TimeoutError:
-                    logger.warning(f"{name} MCP shutdown timeout (ignored)")
-                except Exception as e:
-                    logger.warning(f"{name} MCP shutdown error (ignored). {e}")
+        # Newest first. Closing an older client while a newer one is still
+        # open exits anyio cancel scopes out of order, which raises
+        # CancelledError out of close() (e.g. SUMO + SQLite on 'quit').
+        for name in reversed(self._client_open_order[:]):
+            await self._close_client(name)
+        # Clients assigned to mcp_clients directly (not via _open_client)
+        for name in list(self.mcp_clients):
+            await self._close_client(name)
 
         logger.info("AgentSUMO shutdown complete")
+
+    async def _open_client(self, name: str, client):
+        """Connect an MCP client and record it as the newest open client."""
+        await client.__aenter__()
+        self.mcp_clients[name] = client
+        if name in self._client_open_order:
+            self._client_open_order.remove(name)
+        self._client_open_order.append(name)
+
+    async def _close_client(self, name: str):
+        """Close one MCP client. Errors are logged, never raised."""
+        client = self.mcp_clients.get(name)
+        self.mcp_clients[name] = None
+        if name in self._client_open_order:
+            self._client_open_order.remove(name)
+        if not client:
+            return
+
+        try:
+            # Attempt shutdown with a 5-second timeout
+            await asyncio.wait_for(
+                client.__aexit__(None, None, None),
+                timeout=5.0
+            )
+            logger.info(f"{name} MCP connection closed")
+        except asyncio.TimeoutError:
+            logger.warning(f"{name} MCP shutdown timeout (ignored)")
+        except Exception as e:
+            logger.warning(f"{name} MCP shutdown error (ignored). {e}")
 
     async def __aenter__(self):
         """Context manager enter"""
@@ -1044,8 +1068,7 @@ class AgentSUMO:
                 from agentsumo.client.sqlite_mcp_client import SQLiteMCPClient
 
                 # Connect to new DB (first activation, not reconnect)
-                self.mcp_clients["sqlite"] = SQLiteMCPClient(current_db)
-                await self.mcp_clients["sqlite"].__aenter__()
+                await self._open_client("sqlite", SQLiteMCPClient(current_db))
 
                 # Load and add tools
                 sqlite_tools = await self.mcp_clients["sqlite"].list_tools()
