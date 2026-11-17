@@ -3,13 +3,13 @@ Network visualization functionality for SUMO MCP Server.
 """
 
 import os
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Dict, Any
 import sumolib
 
 from agentsumo_mcp.settings.settings import sumo_environment, visualization_settings
+from agentsumo_mcp.visualization.sumo_plot import run_sumo_plot
 from agentsumo_mcp.utils.path_utils import get_output_path
 
 
@@ -53,13 +53,7 @@ class NetworkPlotter:
                 tmp_path = tmp.name
             
             # Run plot_net_selection.py
-            plot_script = os.path.join(
-                self.environment.SUMO_HOME, "share", "sumo", "tools", 
-                "visualization", "plot_net_selection.py"
-            )
-            
-            subprocess.run([
-                "python3", plot_script,
+            run_sumo_plot("plot_net_selection.py", [
                 "-n", net_file,
                 "-i", tmp_path,
                 "-o", str(output_file),
@@ -70,7 +64,7 @@ class NetworkPlotter:
                 "--selected-color", self.viz_settings.DEFAULT_EDGE_COLOR,
                 "--xlabel", self.viz_settings.XLABEL,
                 "--ylabel", self.viz_settings.YLABEL
-            ], check=True)
+            ])
             
             # Clean up temporary file
             os.remove(tmp_path)

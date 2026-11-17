@@ -122,9 +122,8 @@ class NetConverter:
             type_files = str(settings_dir / self.COUNTRY_TYPE_FILES[country])
             logger.info(f"Detected country '{country}' — using {self.COUNTRY_TYPE_FILES[country]}")
         else:
-            type_files = os.path.join(
-                self.environment.SUMO_HOME, "share", "sumo", "data", "typemap",
-                self.network_settings.TYPE_FILES
+            type_files = self.environment.get_data_path(
+                os.path.join("typemap", self.network_settings.TYPE_FILES)
             )
 
         cmd = [

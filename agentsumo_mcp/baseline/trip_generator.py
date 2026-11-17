@@ -6,6 +6,7 @@ Route assignment (duarouter) is handled separately by RouteGenerator.
 """
 
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 import collections
 from pathlib import Path
@@ -142,7 +143,7 @@ class TripGenerator:
         temp_route_file = str(Path(trip_file).parent / "temp_validate.rou.xml")
 
         randomTrips_cmd = [
-            "python", randomTrips_path,
+            sys.executable, randomTrips_path,
             "-n", net_file_abs,
             "-o", trip_file_abs,
             "--begin", str(begin),
@@ -195,7 +196,7 @@ class TripGenerator:
         # 2. edgesInDistricts (poly.xml → taz.xml)
         edgesInDistricts_path = self.environment.get_tool_path("edgesInDistricts.py")
         subprocess.run([
-            edgesInDistricts_path,
+            sys.executable, edgesInDistricts_path,
             "-n", net_file,
             "-t", poly_path,
             "-o", taz_path

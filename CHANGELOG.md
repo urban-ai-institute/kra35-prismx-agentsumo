@@ -40,6 +40,18 @@ currently at framework version 0.1.0.
 - `traci` is now a declared dependency. sumolib bundled it up to 1.25;
   from 1.26 it ships separately, so a fresh install had no `traci` and
   every `sumo_runner` call failed with "No module named 'traci'".
+- SUMO tool and data paths resolve on every install layout. They were
+  built as `SUMO_HOME/share/sumo/tools`, which only exists for the macOS
+  framework installer, so with the README's Homebrew, Windows and Linux
+  `SUMO_HOME` values RandomOD and zone OD trip generation, traffic-light
+  tools, every plot, and `net_convert` outside Korea failed.
+- SUMO's Python scripts run with the server's own interpreter instead of
+  a bare `python` / `python3` from PATH (macOS has no `python`, and MCP
+  hosts often start servers with a minimal PATH).
+- Plotting tools no longer hang: SUMO's plot scripts call `plt.show()`
+  unless given `--blind`, which opened a window and blocked the tool
+  until it was closed. `visualize_edgedata_tool` also returns the image it
+  actually wrote instead of the `..._%s.png` pattern.
 - The SQLite MCP Server now installs from PyPI as the
   `mcp-server-sqlite>=2025.4.25` dependency. The client used to launch
   it from a `sqlite-mcp-server/` folder that was git-ignored and never

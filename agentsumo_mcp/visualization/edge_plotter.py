@@ -3,12 +3,12 @@ Edge visualization functionality for SUMO MCP Server.
 """
 
 import os
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional, Dict, Any
 
 from agentsumo_mcp.settings.settings import sumo_environment, visualization_settings
+from agentsumo_mcp.visualization.sumo_plot import run_sumo_plot
 from agentsumo_mcp.utils.path_utils import get_output_path
 from agentsumo_mcp.utils.sumo_utils import get_edge_ids_from_road_name
 
@@ -63,13 +63,7 @@ class EdgePlotter:
                 selection_path = tmp.name
             
             # Run plot_net_selection.py
-            plot_script = os.path.join(
-                self.environment.SUMO_HOME, "share", "sumo", "tools", 
-                "visualization", "plot_net_selection.py"
-            )
-            
-            subprocess.run([
-                "python3", plot_script,
+            run_sumo_plot("plot_net_selection.py", [
                 "-n", net_file,
                 "-i", selection_path,
                 "-o", str(output_file),
@@ -80,7 +74,7 @@ class EdgePlotter:
                 "--selected-color", self.viz_settings.DEFAULT_SELECTED_COLOR,
                 "--xlabel", self.viz_settings.XLABEL,
                 "--ylabel", self.viz_settings.YLABEL
-            ], check=True)
+            ])
             
             # Clean up temporary file
             os.remove(selection_path)
@@ -177,13 +171,7 @@ class EdgePlotter:
                 selection_path = tmp.name
             
             # Run SUMO's plot_net_selection.py (same as visualize_edge)
-            plot_script = os.path.join(
-                self.environment.SUMO_HOME, "share", "sumo", "tools", 
-                "visualization", "plot_net_selection.py"
-            )
-            
-            subprocess.run([
-                "python3", plot_script,
+            run_sumo_plot("plot_net_selection.py", [
                 "-n", net_file,
                 "-i", selection_path,
                 "-o", str(output_file),
@@ -194,7 +182,7 @@ class EdgePlotter:
                 "--selected-color", self.viz_settings.DEFAULT_SELECTED_COLOR,
                 "--xlabel", self.viz_settings.XLABEL,
                 "--ylabel", self.viz_settings.YLABEL
-            ], check=True)
+            ])
             
             # Clean up temporary file
             os.remove(selection_path)
