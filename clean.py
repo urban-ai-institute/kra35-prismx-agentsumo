@@ -2,20 +2,25 @@
 """
 AgentSUMO Output Cleaner
 
-Cleans files inside the output folder.
-vehicle_types.add.xml is preserved.
+Cleans files inside the output folder the MCP server writes to
+(AGENTSUMO_MCP_OUTPUT_BASE, or the current directory, + "output").
+uploads/ (user files), vehicle_types.add.xml and the tracked .gitkeep
+files are preserved.
 """
 
 import shutil
-from pathlib import Path
 
-# Project root
-PROJECT_ROOT = Path(__file__).parent
-OUTPUT_DIR = PROJECT_ROOT / "agentsumo" / "output"
+from agentsumo_mcp.utils.path_utils import get_working_directory
+
+OUTPUT_DIR = get_working_directory() / "output"
+
+# Agent state restored at startup; stale once the outputs are gone
+STATE_FILE = OUTPUT_DIR / ".agentsumo_state.json"
 
 # Files to preserve
 PRESERVE_FILES = {
     "vehicle_types.add.xml",
+    ".gitkeep",
 }
 
 # Subfolders to clean
@@ -26,6 +31,7 @@ CLEAN_FOLDERS = [
     "analysis",
     "reports",
     "visualizations",
+    "additional",
 ]
 
 
@@ -53,6 +59,10 @@ def clean_output():
             elif file.is_dir():
                 shutil.rmtree(file)
                 deleted_count += 1
+
+    if STATE_FILE.exists():
+        STATE_FILE.unlink()
+        deleted_count += 1
 
     print(f"\nCleanup complete. {deleted_count} deleted, {preserved_count} preserved.")
 

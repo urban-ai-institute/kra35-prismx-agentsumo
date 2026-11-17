@@ -5,11 +5,11 @@
 **An Agentic Framework for Interactive Simulation Scenario Generation in SUMO via Large Language Models**
 
 [![PyPI](https://img.shields.io/pypi/v/agentsumo-mcp.svg)](https://pypi.org/project/agentsumo-mcp/)
-[![tests](https://github.com/mw-jeong/AgentSUMO/actions/workflows/tests.yml/badge.svg)](https://github.com/mw-jeong/AgentSUMO/actions/workflows/tests.yml)
+[![tests](https://github.com/urban-ai-institute/kra35-prismx-agentsumo/actions/workflows/tests.yml/badge.svg)](https://github.com/urban-ai-institute/kra35-prismx-agentsumo/actions/workflows/tests.yml)
 [![arXiv](https://img.shields.io/badge/arXiv-2511.06804-b31b1b.svg)](https://arxiv.org/abs/2511.06804)
 [![Docs](https://readthedocs.org/projects/agentsumo/badge/?version=latest)](https://agentsumo.readthedocs.io/en/latest/?badge=latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-agentsumo--mcp-purple.svg)](https://registry.modelcontextprotocol.io/v0/servers?search=agentsumo)
 
 <img src="assets/hero_overview.png" alt="AgentSUMO overview" width="850"/>
@@ -82,18 +82,22 @@ The AgentSUMO MCP Server exposes **26 tools** grouped into five capability categ
 
 ### Requirements
 
-- Python 3.10 or later
+- Python 3.12
 - [SUMO](https://eclipse.dev/sumo/) 1.24 or later (locally installed, with `SUMO_HOME` set)
+- [Node.js](https://nodejs.org/) 18 or later with `npx` on `PATH`, for the Filesystem MCP Server (`@modelcontextprotocol/server-filesystem`, downloaded by `npx` on first run). Without it the agent still starts, but cannot read the additional-file guides, write rerouter / VSS / vType files, or inspect Real OD CSVs
 - Anthropic Claude API key (bring-your-own-key)
-- Mapbox access token (used by the web map renderer)
+- Mapbox access token (web interface only; the CLI does not need it)
+- Internet access: OSM road data comes from the public Overpass API, place names are geocoded with Nominatim, and `web_search_tool` uses DuckDuckGo
+- Optional: [`osmium-tool`](https://osmcode.org/osmium-tool/) (`brew install osmium-tool` / `sudo apt-get install osmium-tool`). Only used when Overpass fails: the server then cuts the area from a Geofabrik `.osm.pbf` extract
 
 ### 1. Install SUMO
 
-**macOS**
+**macOS** — Download the installer from the [Eclipse SUMO downloads page](https://sumo.dlr.de/docs/Downloads.php), or use Homebrew. SUMO is not in Homebrew's core formulae; it comes from SUMO's own tap:
 ```bash
+brew tap dlr-ts/sumo
 brew install sumo
 ```
-Or download the installer from the [Eclipse SUMO downloads page](https://sumo.dlr.de/docs/Downloads.php).
+AgentSUMO runs SUMO headless, so the XQuartz setup the Homebrew formula mentions is only needed for `sumo-gui`.
 
 **Windows** — Download the installer from the [Eclipse SUMO downloads page](https://sumo.dlr.de/docs/Downloads.php).
 
@@ -117,8 +121,8 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 Clone the repository, create a virtual environment, and install AgentSUMO:
 ```bash
-git clone https://github.com/mw-jeong/AgentSUMO
-cd AgentSUMO
+git clone https://github.com/urban-ai-institute/kra35-prismx-agentsumo.git
+cd kra35-prismx-agentsumo
 
 # Create a Python 3.12 venv
 uv venv --python 3.12
@@ -153,8 +157,8 @@ MAPBOX_TOKEN=pk.eyJ1Ijoixxxxxxxxxxxxxxxxxx
 
 **`SUMO_HOME`** (required) — absolute path to your local SUMO installation. The directory must contain `bin/sumo` (or `bin/sumo.exe` on Windows).
 ```
-# macOS (Homebrew)
-SUMO_HOME=/opt/homebrew/share/sumo
+# macOS (Homebrew): $(brew --prefix sumo)/share/sumo
+SUMO_HOME=/opt/homebrew/opt/sumo/share/sumo
 
 # macOS (Eclipse SUMO installer)
 SUMO_HOME=/Library/Frameworks/EclipseSUMO.framework/Versions/<version>/EclipseSUMO  # e.g. 1.24.0; use the directory name installed under Versions/
@@ -166,7 +170,7 @@ SUMO_HOME=C:\Program Files (x86)\Eclipse\Sumo
 SUMO_HOME=/usr/share/sumo
 ```
 
-**`AGENTSUMO_MCP_OUTPUT_BASE`** (optional) — override the base directory where the MCP server writes simulation outputs (networks, trips, results). Defaults to the current working directory.
+**`AGENTSUMO_MCP_OUTPUT_BASE`** (optional) — override the base directory where the MCP server writes simulation outputs (networks, trips, results). Defaults to the current working directory, or `~/agentsumo-output` when that directory is not writable (MCP hosts such as Claude Desktop often start servers in `/`).
 ```
 AGENTSUMO_MCP_OUTPUT_BASE=/path/to/your/output/dir
 ```
@@ -174,15 +178,19 @@ AGENTSUMO_MCP_OUTPUT_BASE=/path/to/your/output/dir
 ### 4. Run
 
 ```bash
-# Web interface (opens at http://localhost:8000)
-python web.py
+# Web interface (opens at http://localhost:8000; needs MAPBOX_TOKEN)
+python web.py                 # python web.py --port 8001 to use another port
 
-# CLI mode
+# CLI mode (type 'help' for commands, 'quit' to exit)
 python chat.py
 
-# Clean up simulation outputs
+# Delete generated simulation outputs (keeps uploads/ and vehicle_types.add.xml)
 python clean.py
 ```
+
+On start the CLI prints `Tools available: N`: 26 AgentSUMO tools plus 14 Filesystem tools when Node.js is available. The six SQLite tools are added once a simulation database exists (after the first `xml_to_sqlite_tool` call).
+
+Simulation outputs go to `output/` under the directory you start from (or `AGENTSUMO_MCP_OUTPUT_BASE`). Start from the repository root so the MCP server runs the checkout's `agentsumo_mcp` rather than the PyPI copy.
 
 ## Project Structure
 
@@ -203,6 +211,7 @@ AgentSUMO/
 │                     #   via .gitkeep — simulations/, networks/, trips/,
 │                     #   analysis/, reports/, uploads/, visualizations/, additional/)
 ├── chat.py           # CLI entry point
+├── clean.py          # Deletes generated outputs
 ├── web.py            # Web server entry point
 └── .env.example      # Environment variable template
 ```
@@ -221,6 +230,23 @@ Or via [`uvx`](https://docs.astral.sh/uv/guides/tools/) without installing:
 uvx agentsumo-mcp
 ```
 
+The standalone server provides the 26 AgentSUMO tools only; the Planner Agent, the SQLite MCP Server and the Filesystem MCP Server belong to this framework. It needs `SUMO_HOME`, and writes outputs under `AGENTSUMO_MCP_OUTPUT_BASE` (default: the working directory, or `~/agentsumo-output` when that is not writable). Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "agentsumo": {
+      "command": "uvx",
+      "args": ["agentsumo-mcp"],
+      "env": {
+        "SUMO_HOME": "/Library/Frameworks/EclipseSUMO.framework/Versions/Current/EclipseSUMO",
+        "AGENTSUMO_MCP_OUTPUT_BASE": "/Users/you/agentsumo-output"
+      }
+    }
+  }
+}
+```
+
 The server is registered in the official [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=agentsumo) under `io.github.mw-jeong/agentsumo-mcp`.
 
 ## Troubleshooting
@@ -229,6 +255,12 @@ The server is registered in the official [MCP Registry](https://registry.modelco
 
 **API key error** — Verify `ANTHROPIC_API_KEY` in your `.env` is set to a valid Claude API key. The Planner Agent will refuse to start without it.
 
+**`brew install sumo` says "No available formula"** — Add SUMO's tap first: `brew tap dlr-ts/sumo`.
+
+**"Filesystem MCP could not start" warning** — Install Node.js 18+ and make sure `npx` is on `PATH`. The first start downloads `@modelcontextprotocol/server-filesystem`, which can take a minute. Without it the agent still runs, but road closures (rerouter), variable speed signs and vehicle-type edits are unavailable.
+
+**`osm_extract` is slow or fails** — The public Overpass API can take minutes for larger areas or be temporarily overloaded. Use a smaller area (`bbox`, or `city` with a smaller `radius`), retry later, or install `osmium-tool` so the server can fall back to a Geofabrik extract.
+
 **Dependency error** — Re-resolve dependencies:
 ```bash
 uv pip install -e . --upgrade
@@ -236,11 +268,20 @@ uv pip install -e . --upgrade
 
 **Legacy token files (deprecated, scheduled for removal in 0.2.0)** — AgentSUMO still falls back to `claude_api.txt` and `mapbox_token.txt` at the project root when the corresponding environment variables are missing, but those code paths now emit a `DeprecationWarning` at import time. Use the `.env` workflow for new installations.
 
+## Development
+
+```bash
+uv pip install pytest
+pytest tests/
+```
+
+Tests that need SUMO (network editing, simulation runs) are skipped when `SUMO_HOME` does not point at a SUMO installation.
+
 ## Documentation
 
 Full documentation lives at **[agentsumo.readthedocs.io](https://agentsumo.readthedocs.io)**.
 
-- [Installation](https://agentsumo.readthedocs.io/en/latest/installation.html) — SUMO, Python 3.10+, environment setup
+- [Installation](https://agentsumo.readthedocs.io/en/latest/installation.html) — SUMO, Python 3.12, environment setup
 - [Tools](https://agentsumo.readthedocs.io/en/latest/mcp_servers/agentsumo/index.html) — reference for all MCP tools
 - [Schema](https://agentsumo.readthedocs.io/en/latest/database/index.html) — `simulations.db` ER diagram and column reference
 - [Tutorials](https://agentsumo.readthedocs.io/en/latest/tutorials/index.html) — walkthroughs of the paper case studies

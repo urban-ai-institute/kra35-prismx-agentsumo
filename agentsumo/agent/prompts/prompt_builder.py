@@ -7,8 +7,14 @@ Dynamic prompt assembly based on Claude's official guidelines.
 from pathlib import Path
 from typing import Dict, Optional
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+
+
+def _same_path(a, b) -> bool:
+    """True if two file paths point to the same location."""
+    return os.path.realpath(str(a)) == os.path.realpath(str(b))
 
 
 class PromptBuilder:
@@ -175,10 +181,16 @@ class PromptBuilder:
 
         db_text = "None"
         if db and db != "None" and sqlite_enabled:
+            # List only simulations stored in the current DB (other areas
+            # have their own DB). Skip malformed entries, e.g. a missing or
+            # None simulation_id, and entries saved before simulations
+            # recorded their DB.
             sims_list = ", ".join(
-                s.get("simulation_id", "")
-                for s in simulations
-            ) if simulations else "None"
+                str(s["simulation_id"])
+                for s in (simulations or [])
+                if isinstance(s, dict) and s.get("simulation_id")
+                and s.get("db_file") and _same_path(s["db_file"], db)
+            ) or "None"
             db_text = f"""
     <path>{db}</path>
     <simulations>{sims_list}</simulations>"""
@@ -201,7 +213,7 @@ class PromptBuilder:
 **IMPORTANT for Policy Comparison:**
 - `baseline_network`: Original network for policy comparison (USE THIS for all policy tools!)
 - `current_network`: Most recent network (may include policy modifications)
-- For policy experiments (reduce_lanes, edge_edit, speed_limit_edit), ALWAYS use `baseline_network` as input!
+- For policy experiments (`reduce_lanes_tool`, `edge_edit_tool`, `speed_limit_edit_tool`), ALWAYS use `baseline_network` as input!
 
 **If analysis_database is enabled, use SQLite MCP tools for detailed analysis: `read_query` for SELECT queries, `write_query` for INSERT/UPDATE/DELETE, `create_table` for new tables, `list_tables` and `describe_table` for schema inspection, and `append_insight` to record intermediate findings.**
 
@@ -457,9 +469,9 @@ with the policy type and edge IDs. Route to the appropriate method:
 
 | Policy from UI | Method | Description |
 |---|---|---|
-| road_closure | edge_edit tool (numLanes=0) | Static network modification, permanent |
-| lane_reduction | edge_edit tool (reduce numLanes) | Static network modification, permanent |
-| speed_limit | speed_limit_edit tool | Static network modification, permanent |
+| road_closure | `edge_edit_tool` (deletes the edges) | Static network modification, permanent |
+| lane_reduction | `reduce_lanes_tool` | Static network modification, permanent |
+| speed_limit | `speed_limit_edit_tool` | Static network modification, permanent |
 | rerouter | Guide-based (read rerouter.md) | Time-based closure/rerouting via additional file |
 | vss | Guide-based (read vss.md) | Time-based speed control via additional file |
 

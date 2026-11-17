@@ -8,26 +8,35 @@ Allows direct conversation with AgentSUMO.
 import asyncio
 import sys
 import argparse
-import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load the .env next to this script before anything reads the environment.
+# python-dotenv strips quotes and inline comments, and variables already set
+# in the shell take precedence. A legacy claude_api.txt is still read by
+# AgentSUMOConfig when ANTHROPIC_API_KEY is not set.
+load_dotenv(Path(__file__).parent / ".env")
+
 from agentsumo import AgentSUMO
 
-# Load API key from claude_api.txt or .env
-api_key_file = Path(__file__).parent / "claude_api.txt"
-env_file = Path(__file__).parent / ".env"
 
-if api_key_file.exists():
-    with open(api_key_file) as f:
-        api_key = f.read().strip()
-        if api_key:
-            os.environ["ANTHROPIC_API_KEY"] = api_key
-elif env_file.exists():
-    with open(env_file) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                key, value = line.split('=', 1)
-                os.environ[key] = value
+def filesystem_directories():
+    """
+    Directories the Filesystem MCP may read and write.
+
+    - additional_files_guide/: rerouter, VSS and vType guides the agent reads
+      before writing SUMO additional files
+    - the output directory the MCP tools write to (AGENTSUMO_MCP_OUTPUT_BASE
+      or the current directory, + output/): new additional files go to
+      output/additional/, vehicle_types.add.xml lives in output/simulations/,
+      and Real OD CSVs to inspect can be placed in output/uploads/
+    """
+    import agentsumo.agent
+    from agentsumo_mcp.utils.path_utils import get_output_path
+
+    guides = Path(agentsumo.agent.__file__).parent / "additional_files_guide"
+    return [str(guides), str(get_output_path("output"))]
 
 
 async def main(debug=False):
@@ -45,7 +54,13 @@ async def main(debug=False):
     print("\nInitializing...")
 
     try:
-        async with AgentSUMO(enable_debug=debug) as agent:
+        # The Filesystem MCP runs through npx (Node.js). If it cannot start,
+        # the agent logs a warning and continues without file tools.
+        async with AgentSUMO(
+            enable_debug=debug,
+            enable_filesystem_mcp=True,
+            filesystem_directories=filesystem_directories()
+        ) as agent:
             print("\nAgentSUMO is ready.")
             print("\nCommands.")
             print("  - 'quit' or 'exit' to quit")

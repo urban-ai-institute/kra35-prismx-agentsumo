@@ -41,7 +41,7 @@ class FilesystemMCPClient:
     def __init__(
         self,
         allowed_directories: Union[str, List[str]],
-        connection_timeout: float = 15.0,
+        connection_timeout: float = 120.0,
         tool_timeout: float = 30.0
     ):
         """
@@ -49,7 +49,8 @@ class FilesystemMCPClient:
 
         Args:
             allowed_directories: Directory or list of directories to allow access to (absolute paths)
-            connection_timeout: Connection timeout in seconds
+            connection_timeout: Connection timeout in seconds. Generous because the
+                first run downloads the server package through npx.
             tool_timeout: Tool execution timeout in seconds
         """
         if isinstance(allowed_directories, str):
@@ -120,9 +121,29 @@ class FilesystemMCPClient:
             logger.info("Filesystem MCP Server connection established")
 
         except asyncio.TimeoutError:
+            await self._close_contexts()
             raise RuntimeError(f"Filesystem MCP Server connection timeout ({self.connection_timeout}s)")
         except Exception as e:
+            await self._close_contexts()
             raise RuntimeError(f"Filesystem MCP Server connection failed - {e}")
+
+    async def _close_contexts(self):
+        """
+        Exit the session and STDIO contexts left entered by a failed connect.
+
+        Left open, their anyio cancel scopes stay on the task's stack (and
+        the npx process keeps running), which breaks the shutdown of every
+        MCP client opened before this one.
+        """
+        for attr in ("_session_context_manager", "_stdio_context_manager"):
+            context_manager = getattr(self, attr)
+            setattr(self, attr, None)
+            if context_manager is not None:
+                try:
+                    await context_manager.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.debug(f"Cleanup after failed connection (ignored) - {e}")
+        self.session = None
 
     async def _disconnect(self):
         """Disconnect from server"""

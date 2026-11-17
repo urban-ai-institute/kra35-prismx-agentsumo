@@ -15,6 +15,14 @@ from agentsumo_mcp.utils.path_utils import get_output_path, get_working_director
 logger = logging.getLogger("agentsumo_mcp.route_generator")
 
 
+def _tool_error(name: str, result: subprocess.CompletedProcess, max_chars: int = 2000) -> str:
+    """Error message for a failed SUMO tool, ending with the tail of its output."""
+    output = (result.stderr or result.stdout or "").strip()
+    if len(output) > max_chars:
+        output = "..." + output[-max_chars:].split("\n", 1)[-1]
+    return f"{name} failed (exit code {result.returncode}): {output or 'no output'}"
+
+
 class RouteGenerator:
     """Generates routes from trips using duarouter."""
 
@@ -87,12 +95,8 @@ class RouteGenerator:
         ], capture_output=True, text=True)
 
         if result.returncode != 0:
-            error_msg = result.stderr or result.stdout
-            raise subprocess.CalledProcessError(
-                result.returncode,
-                [duarouter_path],
-                output=result.stdout,
-                stderr=error_msg
-            )
+            # CalledProcessError's message is only the exit status; the
+            # caller returns str(e), so put the tool's own error in it.
+            raise RuntimeError(_tool_error("duarouter", result))
 
         logger.info(f"Route generation complete: {Path(route_file).name}")

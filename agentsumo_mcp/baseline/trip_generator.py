@@ -5,7 +5,9 @@ Generates trip demand (trips.xml) from OD data.
 Route assignment (duarouter) is handled separately by RouteGenerator.
 """
 
+import re
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 import collections
 from pathlib import Path
@@ -32,6 +34,21 @@ DEFAULT_ZONE_MAPPING = {
     "O_time_relative": "O_time_relative",
     "zone_id_column": "h3_indx"
 }
+
+
+def _tool_error(name: str, result: subprocess.CompletedProcess, max_chars: int = 2000) -> str:
+    """Error message for a failed SUMO tool, ending with the tail of its output."""
+    output = (result.stderr or result.stdout or "").strip()
+    if len(output) > max_chars:
+        output = "..." + output[-max_chars:].split("\n", 1)[-1]
+    return f"{name} failed (exit code {result.returncode}): {output or 'no output'}"
+
+
+def _run_tool(name: str, cmd: list) -> None:
+    """Run a SUMO tool; on failure raise with its stderr instead of only the exit code."""
+    result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    if result.returncode != 0:
+        raise RuntimeError(_tool_error(name, result))
 
 
 class TripGenerator:
@@ -86,6 +103,11 @@ class TripGenerator:
             trip_count = 0
 
             if trip_type == "RandomOD":
+                # One file per demand level, so generating "light" and
+                # "heavy" before simulating either keeps both.
+                if traffic_condition:
+                    level = re.sub(r"[^A-Za-z0-9]+", "_", traffic_condition).strip("_")
+                    trip_file = str(output_path / f"{tag}_{level or 'custom'}.trips.xml")
                 trip_count = self._generate_random_od(
                     net_file, trip_file, traffic_condition
                 )
@@ -142,7 +164,7 @@ class TripGenerator:
         temp_route_file = str(Path(trip_file).parent / "temp_validate.rou.xml")
 
         randomTrips_cmd = [
-            "python", randomTrips_path,
+            sys.executable, randomTrips_path,
             "-n", net_file_abs,
             "-o", trip_file_abs,
             "--begin", str(begin),
@@ -155,14 +177,20 @@ class TripGenerator:
             'type="passenger" departLane="free" departSpeed="random" departPos="random_free"'
         ]
 
+        # A file left from an earlier run must not pass as this run's output.
+        Path(trip_file).unlink(missing_ok=True)
+
         result = subprocess.run(randomTrips_cmd, capture_output=True, text=True, check=False)
 
         temp_route_path = Path(temp_route_file)
         if temp_route_path.exists():
             temp_route_path.unlink()
 
-        if not Path(trip_file).exists():
-            raise RuntimeError(f"Trip file was not created. Command output: {result.stderr}")
+        # randomTrips writes the unvalidated trips before --validate runs
+        # duarouter, so a failed run can still leave a trip file behind.
+        if result.returncode != 0 or not Path(trip_file).exists():
+            Path(trip_file).unlink(missing_ok=True)
+            raise RuntimeError(_tool_error("randomTrips.py", result))
 
         tree = ET.parse(trip_file)
         return len(tree.getroot().findall(".//trip"))
@@ -182,7 +210,7 @@ class TripGenerator:
 
         # 1. polyconvert (shp → poly.xml)
         polyconvert_path = self.environment.get_binary_path("polyconvert")
-        subprocess.run([
+        _run_tool("polyconvert", [
             polyconvert_path,
             "-n", net_file,
             "--shapefile", zone_shp_file[:-4] if zone_shp_file.endswith('.shp') else zone_shp_file,
@@ -190,29 +218,29 @@ class TripGenerator:
             "--type", "taz",
             "--proj.utm", "true",
             "-o", poly_path
-        ], check=True, capture_output=True)
+        ])
 
         # 2. edgesInDistricts (poly.xml → taz.xml)
         edgesInDistricts_path = self.environment.get_tool_path("edgesInDistricts.py")
-        subprocess.run([
-            edgesInDistricts_path,
+        _run_tool("edgesInDistricts.py", [
+            sys.executable, edgesInDistricts_path,
             "-n", net_file,
             "-t", poly_path,
             "-o", taz_path
-        ], check=True, capture_output=True)
+        ])
 
         # 3. Create tazRelation.xml from OD data
         self._create_taz_relation(od_data_file, taz_path, tazRelation_path, column_mapping)
 
         # 4. od2trips
         od2trips_path = self.environment.get_binary_path("od2trips")
-        subprocess.run([
+        _run_tool("od2trips", [
             od2trips_path,
             "--taz-files", taz_path,
             "--tazrelation-files", tazRelation_path,
             "-o", trip_file,
             "--vtype", "passenger"
-        ], check=True, capture_output=True)
+        ])
 
         tree = ET.parse(trip_file)
         return len(tree.getroot().findall(".//trip"))
@@ -274,12 +302,20 @@ class TripGenerator:
         column_mapping: Optional[Dict[str, str]] = None
     ) -> None:
         """Create tazRelation.xml from OD data with column mapping support."""
-        df = pd.read_csv(od_data_file)
-
         mapping = column_mapping or {}
         zone_o_col = mapping.get("zone_O", DEFAULT_ZONE_MAPPING["zone_O"])
         zone_d_col = mapping.get("zone_D", DEFAULT_ZONE_MAPPING["zone_D"])
         time_col = mapping.get("O_time_relative", DEFAULT_ZONE_MAPPING["O_time_relative"])
+
+        # TAZ ids are strings; read the zone columns as text so numeric ids
+        # (pandas would make them int64) and leading zeros still match.
+        df = pd.read_csv(od_data_file, dtype={zone_o_col: str, zone_d_col: str})
+        for key, col in {"zone_O": zone_o_col, "zone_D": zone_d_col, "O_time_relative": time_col}.items():
+            if col not in df.columns:
+                raise ValueError(
+                    f"Column '{col}' (mapped from '{key}') not found in CSV. "
+                    f"Available: {list(df.columns)}"
+                )
 
         tree = ET.parse(taz_file)
         root = tree.getroot()
@@ -291,8 +327,8 @@ class TripGenerator:
         for _, row in df.iterrows():
             try:
                 t = int(row[time_col])
-                o = row[zone_o_col]
-                d = row[zone_d_col]
+                o = str(row[zone_o_col]).strip()
+                d = str(row[zone_d_col]).strip()
                 if o not in valid_ids or d not in valid_ids:
                     continue
                 start = (t // interval_sec) * interval_sec
@@ -300,6 +336,14 @@ class TripGenerator:
                 intervals[(start, end)][(o, d)] += 1
             except Exception:
                 continue
+
+        if not intervals:
+            # od2trips would only fail with "no trips" on an empty <data/>
+            raise ValueError(
+                f"No OD row matched the zones from the shapefile. "
+                f"CSV zone ids (e.g. {df[zone_o_col].dropna().astype(str).unique()[:5].tolist()}) "
+                f"must equal the zone_id_column values (e.g. {sorted(valid_ids)[:5]})"
+            )
 
         root_xml = ET.Element("data")
         for idx, ((start, end), od_dict) in enumerate(sorted(intervals.items())):

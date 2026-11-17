@@ -10,17 +10,27 @@ from typing import Optional
 _ENV_BASE_DIR = "AGENTSUMO_MCP_OUTPUT_BASE"
 
 
+_FALLBACK_BASE_DIR = Path.home() / "agentsumo-output"
+
+
 def _resolve_base_dir() -> Path:
     """Resolve the base directory for relative output paths.
 
     Order of precedence:
-      1. AGENTSUMO_MCP_OUTPUT_BASE environment variable.
-      2. Current working directory.
+      1. AGENTSUMO_MCP_OUTPUT_BASE environment variable, made absolute (a
+         relative value would be joined again to the relative paths the
+         tools return, e.g. "runs/runs/...").
+      2. Current working directory, if writable.
+      3. ~/agentsumo-output. MCP hosts such as Claude Desktop often start
+         servers in a read-only directory like "/".
     """
     env_dir = os.environ.get(_ENV_BASE_DIR)
     if env_dir:
-        return Path(env_dir).expanduser()
-    return Path.cwd()
+        return Path(env_dir).expanduser().resolve()
+    cwd = Path.cwd()
+    if os.access(cwd, os.W_OK):
+        return cwd
+    return _FALLBACK_BASE_DIR
 
 
 def get_output_path(output_dir: str, base_dir: Optional[Path] = None) -> Path:
@@ -35,7 +45,8 @@ def get_output_path(output_dir: str, base_dir: Optional[Path] = None) -> Path:
         output_dir: Output directory path (absolute or relative, e.g.
             "output/analysis").
         base_dir: Explicit base directory for relative paths. If omitted,
-            falls back to the AGENTSUMO_MCP_OUTPUT_BASE env var, then CWD.
+            falls back to the AGENTSUMO_MCP_OUTPUT_BASE env var, then CWD
+            (or ~/agentsumo-output when CWD is not writable).
 
     Returns:
         Path: The resolved (and now-existing) output directory.
@@ -55,6 +66,6 @@ def get_working_directory() -> Path:
     Return the base directory used for MCP server outputs.
 
     Honors AGENTSUMO_MCP_OUTPUT_BASE if set, otherwise returns the current
-    working directory.
+    working directory (or ~/agentsumo-output when it is not writable).
     """
     return _resolve_base_dir()

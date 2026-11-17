@@ -4,6 +4,7 @@ Traffic light management tools for SUMO MCP Server.
 
 import datetime
 import subprocess
+import sys
 from typing import Optional, Dict, Any
 
 from agentsumo_mcp.settings.settings import sumo_environment
@@ -51,7 +52,7 @@ class TrafficLightManager:
             # Run tlsCoordinator.py
             tls_coordinator_path = self.environment.get_tool_path("tlsCoordinator.py")
             result = subprocess.run([
-                "python3", tls_coordinator_path,
+                sys.executable, tls_coordinator_path,
                 "-n", net_file,
                 "-r", route_file,
                 "-o", str(tls_offset_file)
@@ -104,7 +105,7 @@ class TrafficLightManager:
             # Run tlsCycleAdaptation.py
             tls_adapt_path = self.environment.get_tool_path("tlsCycleAdaptation.py")
             result = subprocess.run([
-                "python3", tls_adapt_path,
+                sys.executable, tls_adapt_path,
                 "-n", net_file,
                 "-r", route_file,
                 "-o", str(tls_adapt_file),

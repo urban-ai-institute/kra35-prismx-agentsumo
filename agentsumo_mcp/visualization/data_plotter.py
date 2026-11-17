@@ -3,13 +3,13 @@ Data visualization functionality for SUMO MCP Server.
 """
 
 import os
-import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, Any, Tuple, Optional
 import logging
 
 from agentsumo_mcp.settings.settings import sumo_environment, visualization_settings
+from agentsumo_mcp.visualization.sumo_plot import run_sumo_plot
 from agentsumo_mcp.utils.path_utils import get_output_path
 
 logger = logging.getLogger("agentsumo_mcp.visualization")
@@ -167,12 +167,6 @@ class DataPlotter:
             edgedata_name = Path(edgedata_file).stem
             output_file = output_path / f"{edgedata_name}_{attribute}_heatmap_%s.png"
             
-            # Run plot_net_dump.py
-            plot_script = os.path.join(
-                self.environment.SUMO_HOME, "share", "sumo", "tools", 
-                "visualization", "plot_net_dump.py"
-            )
-            
             # print(f"[DEBUG] SUMO_HOME: {self.environment.SUMO_HOME}")
             # print(f"[DEBUG] Plot script: {plot_script}")
             # print(f"[DEBUG] Script exists: {os.path.exists(plot_script)}")
@@ -210,12 +204,8 @@ class DataPlotter:
                 logger.warning(f"Unknown scale_mode '{scale_mode}'. Using 'auto'.")
                 min_val, max_val = self._extract_attribute_range(edgedata_file, attribute)
             
-            # Set SUMO_HOME environment variable for subprocess
-            env = os.environ.copy()
-            env['SUMO_HOME'] = self.environment.SUMO_HOME
-            
-            result = subprocess.run([
-                "python3", plot_script,
+            # Run plot_net_dump.py
+            run_sumo_plot("plot_net_dump.py", [
                 "-n", net_file,
                 "-i", f"{edgedata_file},{edgedata_file}",
                 "-o", str(output_file),
@@ -228,20 +218,22 @@ class DataPlotter:
                 "--color-bar-label", f"{attribute.capitalize()}",
                 "--xlabel", self.viz_settings.XLABEL,
                 "--ylabel", self.viz_settings.YLABEL
-            ], capture_output=True, text=True, cwd=os.getcwd(), env=env)
+            ])
             
-            # print(f"[DEBUG] Command return code: {result.returncode}")
-            # print(f"[DEBUG] STDOUT: {result.stdout}")
-            # print(f"[DEBUG] STDERR: {result.stderr}")
+            # plot_net_dump.py fills %s with each interval's begin time, so
+            # report the files it actually wrote, not the pattern
+            output_files = sorted(str(p) for p in output_path.glob(output_file.name.replace("%s", "*")))
+            if not output_files:
+                raise RuntimeError(f"plot_net_dump.py wrote no file matching {output_file}")
             
-            if result.returncode != 0:
-                raise RuntimeError(f"plot_net_dump.py failed with return code {result.returncode}: {result.stderr}")
-            
-            msg = f"Edge data visualization saved: {output_file} (attribute: {attribute}, scale: {scale_mode}, range: [{min_val:.2f}, {max_val:.2f}])"
+            msg = f"Edge data visualization saved: {output_files[0]} (attribute: {attribute}, scale: {scale_mode}, range: [{min_val:.2f}, {max_val:.2f}])"
+            if len(output_files) > 1:
+                msg += f" and {len(output_files) - 1} more interval(s)"
 
             return {
                 "status": "success",
-                "output_file": str(output_file),
+                "output_file": output_files[0],
+                "output_files": output_files,
                 "attribute": attribute,
                 "scale_mode": scale_mode,
                 "min_value": min_val,

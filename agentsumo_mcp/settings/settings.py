@@ -51,9 +51,26 @@ class SUMOEnvironment:
 
     # SUMO tool paths
     @classmethod
+    def _share_path(cls, subdir: str, name: str) -> str:
+        """Resolve a path under SUMO's tools/ or data/ directory.
+
+        Linux, Windows and Homebrew installs keep them directly in SUMO_HOME;
+        the macOS framework installer keeps them in SUMO_HOME/share/sumo.
+        """
+        for base in (cls.SUMO_HOME, os.path.join(cls.SUMO_HOME, "share", "sumo")):
+            if os.path.isdir(os.path.join(base, subdir)):
+                return os.path.join(base, subdir, name)
+        return os.path.join(cls.SUMO_HOME, subdir, name)
+
+    @classmethod
     def get_tool_path(cls, tool_name: str) -> str:
         """Get path to SUMO tool."""
-        return os.path.join(cls.SUMO_HOME, "share", "sumo", "tools", tool_name)
+        return cls._share_path("tools", tool_name)
+
+    @classmethod
+    def get_data_path(cls, data_name: str) -> str:
+        """Get path to a file in SUMO's data directory."""
+        return cls._share_path("data", data_name)
 
     @classmethod
     def get_binary_path(cls, binary_name: str) -> str:

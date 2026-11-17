@@ -9,6 +9,30 @@ currently at framework version 0.1.0.
 
 ## [Unreleased]
 
+### Fixed
+- The web interface answered every page with a 500 on a fresh install:
+  Starlette 1.0 removed the `TemplateResponse(name, context)` form that
+  `web/app.py` uses. `starlette` is pinned below 1.0.
+- `clean.py` targeted `agentsumo/output`, which does not exist, and
+  deleted nothing. It now cleans the output folder the MCP server writes
+  to (also `additional/` and the saved agent state), keeping `uploads/`,
+  `vehicle_types.add.xml` and the tracked `.gitkeep` files.
+
+### Changed
+- README and installation guide: SUMO via Homebrew needs `brew tap
+  dlr-ts/sumo` (it is not in Homebrew core) and `SUMO_HOME` is
+  `$(brew --prefix sumo)/share/sumo`; the clone URL and directory follow
+  the repository's move to `urban-ai-institute/kra35-prismx-agentsumo`;
+  added internet access and optional `osmium-tool` to the requirements,
+  a Claude Desktop configuration for the standalone server, what the CLI
+  prints on start, troubleshooting for Node.js and Overpass, and how to
+  run the tests.
+- Repository URLs in CITATION.cff, the docs and the `agentsumo-mcp`
+  package metadata point at the new repository. The MCP Registry name
+  `io.github.mw-jeong/agentsumo-mcp` is unchanged.
+
+## [0.1.3] — 2026-11-17
+
 ### Added
 - Fail-fast environment validation at web startup. Missing
   `ANTHROPIC_API_KEY`, `MAPBOX_TOKEN`, `SUMO_HOME`, or an invalid
@@ -31,12 +55,103 @@ currently at framework version 0.1.0.
   a `DeprecationWarning` at import time and the README marks it for
   removal in 0.2.0; the `.env` workflow is the only supported path
   going forward.
+- OSM extraction tries Overpass over HTTP first, then a cached or
+  downloaded Geofabrik PBF cut with osmium, replacing the old osmGet.py
+  path (which could report success without writing the file).
+- `sumo_runner` fails fast with SUMO's own error message and status
+  `"error"` (no output paths) instead of retrying for ~60 s and returning
+  `"warning"` with paths to files that were never written. Each run
+  writes SUMO's messages to `<prefix>_sumo_<timestamp>.log`, returned as
+  `sumo_log`; `replay_file` is returned at the top level.
+- `xml_to_sqlite_tool`: an existing `simulation_id` is replaced (its rows
+  deleted from every table, in one transaction); without an id a new
+  unused auto id is generated; other simulations are never skipped or
+  deleted. Edge metrics SUMO did not write are stored as NULL, not 0.
+- `simulation_report_tool` reports total fuel in kg (SUMO writes
+  `fuel_abs` in mg); it was labelled litres.
+- RandomOD writes one file per demand level
+  (`<net>_<condition>.trips.xml`), so generating "light" and "heavy"
+  no longer overwrites one with the other.
+- Without `AGENTSUMO_MCP_OUTPUT_BASE`, outputs fall back to
+  `~/agentsumo-output` when the working directory is not writable (MCP
+  hosts often start servers in `/`). A relative value is made absolute.
+- The CLI (`chat.py`) enables the Filesystem MCP, which the rerouter,
+  VSS and vType guide workflows require. It needs Node.js 18+ with npx;
+  without it the agent warns and continues.
+- The agent's default `max_tokens` is 16000 (thinking budget 10000);
+  4096 left about 1,000 tokens for the visible reply.
 
 ### Fixed
+- `mcp` is pinned below 2.0 in both the framework and `agentsumo-mcp`.
+  mcp 2.x (August 2026) removed FastMCP, so on a fresh install the
+  AgentSUMO MCP server failed to import and the agent had no SUMO
+  tools. Existing environments with mcp 1.x were unaffected.
+- `traci` is now a declared dependency. sumolib bundled it up to 1.25;
+  from 1.26 it ships separately, so a fresh install had no `traci` and
+  every `sumo_runner` call failed with "No module named 'traci'".
+- SUMO tool and data paths resolve on every install layout. They were
+  built as `SUMO_HOME/share/sumo/tools`, which only exists for the macOS
+  framework installer, so with the README's Homebrew, Windows and Linux
+  `SUMO_HOME` values RandomOD and zone OD trip generation, traffic-light
+  tools, every plot, and `net_convert` outside Korea failed.
+- SUMO's Python scripts run with the server's own interpreter instead of
+  a bare `python` / `python3` from PATH (macOS has no `python`, and MCP
+  hosts often start servers with a minimal PATH).
+- Plotting tools no longer hang: SUMO's plot scripts call `plt.show()`
+  unless given `--blind`, which opened a window and blocked the tool
+  until it was closed. `visualize_edgedata_tool` also returns the image it
+  actually wrote instead of the `..._%s.png` pattern.
+- The SQLite MCP Server now installs from PyPI as the
+  `mcp-server-sqlite>=2025.4.25` dependency. The client used to launch
+  it from a `sqlite-mcp-server/` folder that was git-ignored and never
+  shipped, so on a fresh clone the connection failed, the agent logged
+  the error and continued, and every `read_query` call returned "SQLite
+  MCP is not connected".
 - `ensure_vehicle_types_default` surfaces an actionable
   `PermissionError` ("set AGENTSUMO_MCP_OUTPUT_BASE to a writable
   directory") instead of failing silently when the destination cannot
   be created.
+- Agent state: a failed tool no longer overwrites state (a failed
+  `xml_to_sqlite_tool` used to store a `None` simulation id that broke
+  every later turn, even after restart); the SQLite MCP reconnects when
+  the analysis DB changes instead of querying the previous area's DB;
+  every new base network becomes the policy baseline; the context lists
+  only the current DB's simulations; route files written by vehicle,
+  flow and vType tools are tracked.
+- A reply cut off at `max_tokens` no longer leaves a dangling `tool_use`
+  in history (which made every later API call fail until `reset`).
+- `chat.py` loads `.env` with python-dotenv; its own parser kept quotes
+  and inline comments in values (breaking the API key or `SUMO_HOME`).
+- Shutdown closes MCP clients in reverse order; `quit` with a database
+  open used to end in a CancelledError traceback.
+- The system prompt no longer names tools that do not exist
+  (`tls_optimize`, `reduce_lanes`, ...), and its worked example stores
+  results with `xml_to_sqlite_tool` before querying them.
+- `sumo_runner` with only a trip file wrote `<trip-files>`, which SUMO
+  rejects; trips now load through `route-files`. SUMO's console output
+  and TraCI's retry messages no longer leak into the MCP stdio channel.
+- Vehicles and flows added by `vehicle_generation_tool` and
+  `flow_generation_tool` were appended out of departure order, so SUMO
+  silently dropped them and the scenario matched the baseline. The route
+  file is now kept sorted.
+- `reduce_lanes_tool` recomputes only the junctions the edited edges
+  touch, keeping their edge-to-edge movements; it used to rebuild every
+  junction and signal program, changing unrelated intersections (and OSM
+  turn restrictions) and contaminating policy comparisons. Edits that
+  match no edge now return an error instead of success.
+- `simulation_report_tool`: no crash on a scenario with 0 completed
+  trips, no `NameError` when the stored network cannot be read, and no
+  empty DB file created for a wrong `db_path`.
+- `xml_to_sqlite_tool` creates missing tables in an existing or 0-byte
+  database file instead of failing with "no such table".
+- RandomOD checks randomTrips' exit code instead of returning a stale
+  trips file as success; zone OD matches numeric zone ids; netconvert,
+  duarouter, polyconvert and od2trips failures include their stderr.
+- `agentsumo-mcp` declares `matplotlib`, which the visualization tools
+  need; a standalone install had none, so every plot failed.
+- The framework package no longer bundles a second copy of
+  `agentsumo_mcp`, and ships its prompt template and guides, so a
+  non-editable install works.
 
 ## [0.1.2] — 2026-06-05
 

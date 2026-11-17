@@ -28,67 +28,39 @@ class XMLToSQLiteConverter:
         description: str = None,
         summary_xml: str = None
     ) -> Dict[str, Any]:
-        """Convert XML to SQLite with simulation_id"""
+        """Convert XML to SQLite with simulation_id.
+
+        An explicit simulation_id that already exists in the DB is replaced:
+        its rows are deleted from every per-simulation table and the new
+        results are inserted, in one transaction. Without a simulation_id a
+        new, unused auto id is generated. Other simulations are never touched.
+        """
         conn = None
         db_exists_before = Path(output_db).exists()
 
         try:
-            if not simulation_id:
-                # Include milliseconds to avoid collision in fast consecutive simulations
-                now = datetime.datetime.now()
-                timestamp = now.strftime("%Y%m%d_%H%M%S") + f"_{now.microsecond // 1000:03d}"
-                simulation_id = f"sim_{timestamp}"
-            
-            logger.info(f"Converting to SQLite: {simulation_id}")
-            
-            # Open/create DB
-            db_exists = Path(output_db).exists()
             conn = sqlite3.connect(output_db)
 
-            if not db_exists:
-                self._create_schema(conn)
+            # Decide on the schema by what is in the file, not by whether the
+            # file exists: a 0-byte file (e.g. left by sqlite3.connect() on a
+            # wrong path) or an older DB missing newer tables gets them here.
+            self._ensure_schema(conn)
+
+            replaced = False
+            if not simulation_id:
+                simulation_id = self._new_auto_id(conn)
             else:
-                # Ensure new tables exist in older DBs
-                self._ensure_new_tables(conn)
-                # Prevent duplicate imports of the same simulation data
-                try:
-                    existing = conn.execute(
-                        "SELECT simulation_id, description FROM simulations WHERE net_file=?",
-                        (net_file,)
-                    ).fetchall()
+                replaced = conn.execute(
+                    "SELECT 1 FROM simulations WHERE simulation_id=?", (simulation_id,)
+                ).fetchone() is not None
+                if replaced:
+                    logger.info(f"Replacing existing simulation {simulation_id}")
+                # Always clear the id: also removes rows that older versions
+                # left behind without a simulations entry. Not committed until
+                # the new data is in, so a failed import keeps the old rows.
+                self._delete_simulation(conn, simulation_id)
 
-                    for existing_id, existing_desc in existing:
-                        if existing_id == simulation_id:
-                            # Exact same ID already exists — skip
-                            logger.info(f"Duplicate: {simulation_id} already exists, skipping")
-                            conn.close()
-                            return {
-                                "status": "skipped", "db_file": str(output_db),
-                                "simulation_id": existing_id,
-                                "message": f"Already imported as {existing_id}"
-                            }
-
-                        # Case: auto-generated ID exists, now called with meaningful ID
-                        # → delete the auto entry, proceed with the good one
-                        if existing_id.startswith("sim_") and not simulation_id.startswith("sim_"):
-                            logger.info(f"Replacing auto-generated {existing_id} with {simulation_id}")
-                            conn.execute("DELETE FROM trips WHERE simulation_id=?", (existing_id,))
-                            conn.execute("DELETE FROM edge_metrics WHERE simulation_id=?", (existing_id,))
-                            conn.execute("DELETE FROM simulations WHERE simulation_id=?", (existing_id,))
-                            conn.commit()
-
-                        # Case: meaningful ID exists, now called with auto-generated ID
-                        # → skip the auto entry
-                        if not existing_id.startswith("sim_") and simulation_id.startswith("sim_"):
-                            logger.info(f"Skipping auto-generated {simulation_id}, already have {existing_id}")
-                            conn.close()
-                            return {
-                                "status": "skipped", "db_file": str(output_db),
-                                "simulation_id": existing_id,
-                                "message": f"Already imported as {existing_id}"
-                            }
-                except Exception:
-                    pass  # Table might not exist yet, continue normally
+            logger.info(f"Converting to SQLite: {simulation_id}")
 
             # Import data
             edge_info_count = self._import_edge_info(conn, net_file, simulation_id)
@@ -104,16 +76,21 @@ class XMLToSQLiteConverter:
                 INSERT INTO simulations VALUES (?, ?, ?, ?, ?, ?)
             """, (simulation_id, datetime.datetime.now().isoformat(), trip_count, net_file, route_file, description))
 
-            if not db_exists:
-                self._create_indexes(conn)
-
             conn.commit()
             conn.close()
+
+            if replaced:
+                message = (f"Replaced existing simulation '{simulation_id}': its previous "
+                           f"rows were deleted from every table and the new results imported")
+            else:
+                message = f"Imported simulation '{simulation_id}'"
 
             return {
                 "status": "success",
                 "db_file": output_db,
                 "simulation_id": simulation_id,
+                "replaced": replaced,
+                "message": message,
                 "metadata": {
                     "trip_count": trip_count,
                     "edge_count": edge_count,
@@ -143,70 +120,52 @@ class XMLToSQLiteConverter:
             
             return {"status": "error", "message": str(e)}
     
-    def _ensure_new_tables(self, conn):
-        """Create new tables if they don't exist (migration for older DBs)."""
-        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    # Every table keyed by simulation_id; a replace clears the id from all of them.
+    SIMULATION_TABLES = (
+        "trips", "vehicle_info", "edge_info", "edge_metrics", "network_state", "simulations"
+    )
 
-        if "edge_info" not in tables:
-            conn.execute("""CREATE TABLE edge_info (
-                simulation_id TEXT,
-                edge_id TEXT,
-                road_name TEXT,
-                length REAL,
-                num_lanes INTEGER,
-                speed_limit REAL,
-                PRIMARY KEY (simulation_id, edge_id)
-            )""")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_ei_road_name ON edge_info(road_name)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_ei_length ON edge_info(length)")
-            logger.info("Migrated: edge_info table created in existing DB")
+    def _ensure_schema(self, conn):
+        """Create any missing table/index (new file, 0-byte file, or older DB)."""
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        missing = [t for t in self.SIMULATION_TABLES if t not in tables]
+        if missing:
+            if tables:
+                logger.info(f"Migrated: creating missing tables {missing} in existing DB")
+            self._create_schema(conn)
+            self._create_indexes(conn)
+            conn.commit()
 
-        if "vehicle_info" not in tables:
-            conn.execute("""CREATE TABLE vehicle_info (
-                simulation_id TEXT,
-                vehicle_id TEXT,
-                vehicle_type TEXT,
-                fuel_type TEXT,
-                origin_edge TEXT,
-                destination_edge TEXT,
-                origin_road TEXT,
-                destination_road TEXT,
-                PRIMARY KEY (simulation_id, vehicle_id)
-            )""")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_vi_fuel ON vehicle_info(fuel_type)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_vi_origin ON vehicle_info(origin_road)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_vi_dest ON vehicle_info(destination_road)")
-            logger.info("Migrated: vehicle_info table created in existing DB")
+    def _simulation_id_in_use(self, conn, sim_id: str) -> bool:
+        return any(
+            conn.execute(f"SELECT 1 FROM {t} WHERE simulation_id=? LIMIT 1", (sim_id,)).fetchone()
+            for t in self.SIMULATION_TABLES
+        )
 
-        if "network_state" not in tables:
-            conn.execute("""CREATE TABLE network_state (
-                simulation_id TEXT,
-                time REAL,
-                loaded INTEGER,
-                inserted INTEGER,
-                running INTEGER,
-                waiting INTEGER,
-                ended INTEGER,
-                arrived INTEGER,
-                halting INTEGER,
-                meanSpeed REAL,
-                meanSpeedRelative REAL,
-                meanTravelTime REAL,
-                meanWaitingTime REAL,
-                teleports INTEGER,
-                collisions INTEGER,
-                PRIMARY KEY (simulation_id, time)
-            )""")
-            logger.info("Migrated: network_state table created in existing DB")
+    def _new_auto_id(self, conn) -> str:
+        """Return a sim_<timestamp> id not used by any simulation in the DB."""
+        # Include milliseconds to avoid collision in fast consecutive simulations
+        now = datetime.datetime.now()
+        base = "sim_" + now.strftime("%Y%m%d_%H%M%S") + f"_{now.microsecond // 1000:03d}"
+        sim_id, n = base, 2
+        while self._simulation_id_in_use(conn, sim_id):
+            sim_id, n = f"{base}_{n}", n + 1
+        return sim_id
 
-        conn.commit()
+    def _delete_simulation(self, conn, sim_id: str) -> None:
+        """Delete one simulation's rows from every table (caller commits)."""
+        for t in self.SIMULATION_TABLES:
+            conn.execute(f"DELETE FROM {t} WHERE simulation_id=?", (sim_id,))
 
     def _create_schema(self, conn):
-        """Create schema - store every tripinfo/edgedata XML attribute as its own column."""
-        conn.execute("CREATE TABLE simulations (simulation_id TEXT PRIMARY KEY, created_at TEXT, vehicle_count INTEGER, net_file TEXT, route_file TEXT, description TEXT)")
+        """Create schema - store every tripinfo/edgedata XML attribute as its own column.
+
+        Idempotent (IF NOT EXISTS), so it also fills in tables missing from older DBs.
+        """
+        conn.execute("CREATE TABLE IF NOT EXISTS simulations (simulation_id TEXT PRIMARY KEY, created_at TEXT, vehicle_count INTEGER, net_file TEXT, route_file TEXT, description TEXT)")
 
         # trips table: every attribute from tripinfo XML
-        conn.execute("""CREATE TABLE trips (
+        conn.execute("""CREATE TABLE IF NOT EXISTS trips (
             simulation_id TEXT,
             trip_id TEXT,
             depart REAL,
@@ -240,7 +199,7 @@ class XMLToSQLiteConverter:
         )""")
 
         # vehicle_info table: per-vehicle metadata (type, fuel, OD)
-        conn.execute("""CREATE TABLE vehicle_info (
+        conn.execute("""CREATE TABLE IF NOT EXISTS vehicle_info (
             simulation_id TEXT,
             vehicle_id TEXT,
             vehicle_type TEXT,
@@ -253,7 +212,7 @@ class XMLToSQLiteConverter:
         )""")
 
         # edge_info table: network edge attributes (road_name, length, etc.)
-        conn.execute("""CREATE TABLE edge_info (
+        conn.execute("""CREATE TABLE IF NOT EXISTS edge_info (
             simulation_id TEXT,
             edge_id TEXT,
             road_name TEXT,
@@ -264,7 +223,7 @@ class XMLToSQLiteConverter:
         )""")
 
         # edge_metrics table: every attribute from edgedata XML
-        conn.execute("""CREATE TABLE edge_metrics (
+        conn.execute("""CREATE TABLE IF NOT EXISTS edge_metrics (
             simulation_id TEXT,
             edge_id TEXT,
             interval_begin REAL,
@@ -310,7 +269,7 @@ class XMLToSQLiteConverter:
         )""")
 
         # network_state table: per-step network aggregates from summary.xml
-        conn.execute("""CREATE TABLE network_state (
+        conn.execute("""CREATE TABLE IF NOT EXISTS network_state (
             simulation_id TEXT,
             time REAL,
             loaded INTEGER,
@@ -544,7 +503,12 @@ class XMLToSQLiteConverter:
                 for edge in elem.findall('edge'):
                     attrs = edge.attrib
 
-                    def safe_float(key, default=0.0):
+                    # SUMO omits attributes it cannot measure (e.g. speed,
+                    # traveltime, timeLoss on an edge no vehicle used, or the
+                    # whole edge in the excludeEmpty emission file). Store
+                    # those as NULL, not 0.0, so idle edges do not show up as
+                    # "speed 0" and do not dilute AVG().
+                    def safe_float(key, default=None):
                         val = attrs.get(key)
                         if val is None or val == '':
                             return default
@@ -553,7 +517,7 @@ class XMLToSQLiteConverter:
                         except (ValueError, TypeError):
                             return default
 
-                    def safe_int(key, default=0):
+                    def safe_int(key, default=None):
                         val = attrs.get(key)
                         if val is None or val == '':
                             return default
@@ -566,7 +530,7 @@ class XMLToSQLiteConverter:
                     edge_id = attrs.get('id', '')
                     em = emission_data.get(edge_id, {})
 
-                    def em_float(key, default=0.0):
+                    def em_float(key, default=None):
                         val = em.get(key)
                         if val is None or val == '':
                             return default
@@ -664,30 +628,30 @@ class XMLToSQLiteConverter:
     def _create_indexes(self, conn):
         """Create indexes"""
         # edge_info indexes
-        conn.execute("CREATE INDEX idx_ei_road_name ON edge_info(road_name)")
-        conn.execute("CREATE INDEX idx_ei_length ON edge_info(length)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ei_road_name ON edge_info(road_name)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ei_length ON edge_info(length)")
 
         # edge_metrics indexes
-        conn.execute("CREATE INDEX idx_density ON edge_metrics(density DESC)")
-        conn.execute("CREATE INDEX idx_sim_edge ON edge_metrics(simulation_id, edge_id)")
-        conn.execute("CREATE INDEX idx_interval ON edge_metrics(interval_begin, interval_end)")
-        conn.execute("CREATE INDEX idx_speed ON edge_metrics(speed DESC)")
-        conn.execute("CREATE INDEX idx_waitingTime ON edge_metrics(waitingTime DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_density ON edge_metrics(density DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sim_edge ON edge_metrics(simulation_id, edge_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_interval ON edge_metrics(interval_begin, interval_end)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_speed ON edge_metrics(speed DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_waitingTime ON edge_metrics(waitingTime DESC)")
         
         # vehicle_info indexes
-        conn.execute("CREATE INDEX idx_vi_fuel ON vehicle_info(fuel_type)")
-        conn.execute("CREATE INDEX idx_vi_origin ON vehicle_info(origin_road)")
-        conn.execute("CREATE INDEX idx_vi_dest ON vehicle_info(destination_road)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_vi_fuel ON vehicle_info(fuel_type)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_vi_origin ON vehicle_info(origin_road)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_vi_dest ON vehicle_info(destination_road)")
 
         # trips indexes
-        conn.execute("CREATE INDEX idx_trips_duration ON trips(duration DESC)")
-        conn.execute("CREATE INDEX idx_trips_timeLoss ON trips(timeLoss DESC)")
-        conn.execute("CREATE INDEX idx_trips_sim ON trips(simulation_id)")
-        conn.execute("CREATE INDEX idx_trips_depart ON trips(depart)")
-        conn.execute("CREATE INDEX idx_trips_arrival ON trips(arrival)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_duration ON trips(duration DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_timeLoss ON trips(timeLoss DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_sim ON trips(simulation_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_depart ON trips(depart)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_arrival ON trips(arrival)")
 
         # network_state indexes
-        conn.execute("CREATE INDEX idx_ss_sim ON network_state(simulation_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ss_sim ON network_state(simulation_id)")
 
 
 def extract_tag_from_xml(xml_file: str) -> str:

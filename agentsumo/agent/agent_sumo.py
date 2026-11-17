@@ -6,8 +6,10 @@ Version 0.1: Basic version with chat + tool calling
 
 import anthropic
 from typing import List, Dict, Any, Optional, Callable
+import asyncio
 import json
 import logging
+import os
 import re
 
 from agentsumo.client import SUMOMCPClient
@@ -17,6 +19,14 @@ from agentsumo.agent.prompts import PromptBuilder
 
 
 logger = logging.getLogger("agentsumo.agent")
+
+# Tool result statuses that mean the tool did not produce its outputs
+_FAILED_STATUSES = ("error", "validation_error")
+
+
+def _same_path(a, b) -> bool:
+    """True if two file paths point to the same location."""
+    return os.path.realpath(str(a)) == os.path.realpath(str(b))
 
 
 class AgentSUMO:
@@ -40,7 +50,7 @@ class AgentSUMO:
     def __init__(
         self,
         model: str = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 16000,
         enable_logging: bool = True,
         enable_debug: bool = False,
         interface: str = "cli",
@@ -55,7 +65,9 @@ class AgentSUMO:
         """
         Args:
             model: Claude model (default. config.DEFAULT_MODEL)
-            max_tokens: Maximum response tokens
+            max_tokens: Maximum response tokens, extended thinking included (up to
+                        10000 of them go to thinking). Requests are not streamed, so
+                        the SDK refuses values above ~21000 (8192 for Claude Opus 4/4.1).
             enable_logging: Enable logging
             enable_debug: Debug mode (show raw response)
             interface: Runtime environment ("cli" or "web")
@@ -100,6 +112,10 @@ class AgentSUMO:
             "sqlite": None,   # SQLite MCP Server (optional)
             "filesystem": None  # Filesystem MCP Server (optional, for ablation)
         }
+        # Names of the connected clients in the order they were opened. Each
+        # client holds anyio cancel scopes, which must be exited in reverse
+        # order, so close() walks this list backwards.
+        self._client_open_order: List[str] = []
         self.tools: List[Dict] = []
 
         # Conversation history (official multi-turn pattern)
@@ -154,9 +170,9 @@ class AgentSUMO:
 
         Tasks:
         1. Connect SUMO MCP Client (required)
-        2. Connect SQLite MCP Client (auto-enabled when db_path exists and file is present)
-        3. Load and integrate tools
-        4. Convert to Claude tools format
+        2. Connect Filesystem MCP Client (when enabled)
+        3. Connect SQLite MCP Client (auto-enabled when db_path exists and file is present)
+        4. Load, integrate and convert tools to Claude tools format
         """
         from pathlib import Path as PathlibPath
 
@@ -182,15 +198,38 @@ class AgentSUMO:
         sumo_tools = []
         if self._enable_sumo_mcp:
             logger.info("Connecting to SUMO MCP Server...")
-            self.mcp_clients["sumo"] = SUMOMCPClient(tool_timeout=86400.0)
-            await self.mcp_clients["sumo"].__aenter__()
+            await self._open_client("sumo", SUMOMCPClient(tool_timeout=86400.0))
 
             sumo_tools = await self.mcp_clients["sumo"].list_tools()
             logger.info(f"SUMO MCP: {len(sumo_tools)} tools")
         else:
             logger.info("SUMO MCP disabled (SQLite-only mode)")
 
-        # 2. Connect SQLite MCP
+        # 2. Connect Filesystem MCP (only when enable_filesystem_mcp=True)
+        filesystem_tools = []
+
+        if self._enable_filesystem_mcp and self._filesystem_directories:
+            try:
+                from agentsumo.client.filesystem_mcp_client import FilesystemMCPClient
+
+                # The first run downloads the server through npx, which can take a while
+                logger.info(f"Connecting to Filesystem MCP Server... (dirs. {self._filesystem_directories})")
+                await self._open_client("filesystem", FilesystemMCPClient(self._filesystem_directories))
+
+                filesystem_tools = await self.mcp_clients["filesystem"].list_tools()
+                logger.info(f"Filesystem MCP: {len(filesystem_tools)} tools")
+
+            except Exception as e:
+                logger.warning(
+                    f"Filesystem MCP connection failed. {e}. Continuing without file tools "
+                    f"(the server needs Node.js/npx; guide-based editing and OD file inspection are unavailable)."
+                )
+        elif self._enable_filesystem_mcp:
+            logger.warning("Filesystem MCP enabled but filesystem_directories not specified.")
+
+        # 3. Connect SQLite MCP. Opened last so it is always the newest client:
+        # switching to another area's DB later closes and reopens it, which
+        # only works for the newest client (see _client_open_order).
         sqlite_tools = []
 
         if self._enable_sqlite_mcp is not False:
@@ -234,8 +273,7 @@ class AgentSUMO:
                     from agentsumo.client.sqlite_mcp_client import SQLiteMCPClient
 
                     logger.info(f"Connecting to SQLite MCP Server... (DB. {db_path})")
-                    self.mcp_clients["sqlite"] = SQLiteMCPClient(db_path)
-                    await self.mcp_clients["sqlite"].__aenter__()
+                    await self._open_client("sqlite", SQLiteMCPClient(db_path))
 
                     sqlite_tools = await self.mcp_clients["sqlite"].list_tools()
 
@@ -251,25 +289,6 @@ class AgentSUMO:
         else:
             logger.info("SQLite MCP disabled")
 
-        # 3. Connect Filesystem MCP (only when enable_filesystem_mcp=True)
-        filesystem_tools = []
-
-        if self._enable_filesystem_mcp and self._filesystem_directories:
-            try:
-                from agentsumo.client.filesystem_mcp_client import FilesystemMCPClient
-
-                logger.info(f"Connecting to Filesystem MCP Server... (dirs. {self._filesystem_directories})")
-                self.mcp_clients["filesystem"] = FilesystemMCPClient(self._filesystem_directories)
-                await self.mcp_clients["filesystem"].__aenter__()
-
-                filesystem_tools = await self.mcp_clients["filesystem"].list_tools()
-                logger.info(f"Filesystem MCP: {len(filesystem_tools)} tools")
-
-            except Exception as e:
-                logger.error(f"Filesystem MCP connection failed. {e}. Continuing.")
-        elif self._enable_filesystem_mcp:
-            logger.warning("Filesystem MCP enabled but filesystem_directories not specified.")
-
         # 4. Integrate tools
         all_mcp_tools = sumo_tools + sqlite_tools + filesystem_tools
         self.tools = self._convert_mcp_to_claude_tools(all_mcp_tools)
@@ -281,23 +300,45 @@ class AgentSUMO:
         """Shut down the agent. Close all MCP connections."""
         logger.info("AgentSUMO shutting down...")
 
-        import asyncio
-
-        for name, client in self.mcp_clients.items():
-            if client:
-                try:
-                    # Attempt shutdown with a 5-second timeout
-                    await asyncio.wait_for(
-                        client.__aexit__(None, None, None),
-                        timeout=5.0
-                    )
-                    logger.info(f"{name} MCP connection closed")
-                except asyncio.TimeoutError:
-                    logger.warning(f"{name} MCP shutdown timeout (ignored)")
-                except Exception as e:
-                    logger.warning(f"{name} MCP shutdown error (ignored). {e}")
+        # Newest first. Closing an older client while a newer one is still
+        # open exits anyio cancel scopes out of order, which raises
+        # CancelledError out of close() (e.g. SUMO + SQLite on 'quit').
+        for name in reversed(self._client_open_order[:]):
+            await self._close_client(name)
+        # Clients assigned to mcp_clients directly (not via _open_client)
+        for name in list(self.mcp_clients):
+            await self._close_client(name)
 
         logger.info("AgentSUMO shutdown complete")
+
+    async def _open_client(self, name: str, client):
+        """Connect an MCP client and record it as the newest open client."""
+        await client.__aenter__()
+        self.mcp_clients[name] = client
+        if name in self._client_open_order:
+            self._client_open_order.remove(name)
+        self._client_open_order.append(name)
+
+    async def _close_client(self, name: str):
+        """Close one MCP client. Errors are logged, never raised."""
+        client = self.mcp_clients.get(name)
+        self.mcp_clients[name] = None
+        if name in self._client_open_order:
+            self._client_open_order.remove(name)
+        if not client:
+            return
+
+        try:
+            # Attempt shutdown with a 5-second timeout
+            await asyncio.wait_for(
+                client.__aexit__(None, None, None),
+                timeout=5.0
+            )
+            logger.info(f"{name} MCP connection closed")
+        except asyncio.TimeoutError:
+            logger.warning(f"{name} MCP shutdown timeout (ignored)")
+        except Exception as e:
+            logger.warning(f"{name} MCP shutdown error (ignored). {e}")
 
     async def __aenter__(self):
         """Context manager enter"""
@@ -398,12 +439,7 @@ class AgentSUMO:
             return result
 
         # 4. Plain text response (handle all content blocks)
-        assistant_text = self._extract_text_from_response(response)
-
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": response.content
-        })
+        assistant_text = self._record_final_response(response)
 
         total_time = time.time() - start_time
         logger.info(f"AgentSUMO: {assistant_text[:100]}...")
@@ -618,16 +654,47 @@ class AgentSUMO:
             return await self._handle_tool_use(final_response, _depth=_depth + 1)
 
         # Final text response (handles all content blocks, including thinking)
-        final_text = self._extract_text_from_response(final_response)
-
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": final_response.content
-        })
+        final_text = self._record_final_response(final_response)
 
         logger.info(f"AgentSUMO: {final_text[:100]}...")
 
         return final_text
+
+    def _record_final_response(self, response) -> str:
+        """
+        Append a final (non tool_use) response to history and return its text.
+
+        A response cut off at max_tokens can end in a half-written tool_use
+        block. It is never executed, so it must not be stored: a tool_use
+        without a matching tool_result makes every later API call fail until
+        the conversation is reset. The user is told the reply was cut off.
+        """
+        content = response.content
+        text = self._extract_text_from_response(response)
+
+        if response.stop_reason == "max_tokens":
+            dropped_tool = any(getattr(b, "type", None) == "tool_use" for b in content)
+            notice = f"[Reply cut off: the response reached the {self.max_tokens}-token limit before it finished."
+            if dropped_tool:
+                notice += " The tool call it was starting was not run."
+            notice += " Ask me to continue, or narrow the request.]"
+            logger.warning(f"Response hit max_tokens ({self.max_tokens}). Dropped tool_use: {dropped_tool}")
+
+            # Keep the history valid: no tool_use, no empty text block
+            content = [
+                b for b in content
+                if getattr(b, "type", None) != "tool_use"
+                and not (getattr(b, "type", None) == "text" and not b.text.strip())
+            ]
+            content.append({"type": "text", "text": notice})
+            text = f"{text}\n\n{notice}" if text else notice
+
+        self.conversation_history.append({
+            "role": "assistant",
+            "content": content
+        })
+
+        return text
 
     async def _route_tool_call(self, tool_name: str, tool_input: dict):
         """
@@ -654,10 +721,11 @@ class AgentSUMO:
             return await self.mcp_clients["sqlite"].call_tool(tool_name, tool_input)
 
         # Filesystem MCP tools
-        # Mirror the 13 tools exposed by @modelcontextprotocol/server-filesystem
-        # (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
+        # Mirror the tools exposed by @modelcontextprotocol/server-filesystem
+        # (https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem),
+        # including read_file, the deprecated alias of read_text_file it still lists
         filesystem_tool_names = [
-            "read_text_file", "read_media_file", "read_multiple_files",
+            "read_text_file", "read_file", "read_media_file", "read_multiple_files",
             "write_file", "edit_file", "create_directory",
             "list_directory", "list_directory_with_sizes", "directory_tree",
             "move_file", "search_files", "get_file_info",
@@ -684,6 +752,11 @@ class AgentSUMO:
         Update state (including SQLite support).
         """
         try:
+            # The tool raised inside the MCP server
+            if getattr(result, "isError", False):
+                logger.debug(f"{tool_name}: MCP error result, state left unchanged")
+                return
+
             # Verify MCP response format
             if not result.content or len(result.content) == 0:
                 logger.warning(f"{tool_name}: result.content is empty")
@@ -721,6 +794,12 @@ class AgentSUMO:
                     logger.debug(f"   Original content. {content_str[:500]}")
                     return
 
+            # A failed tool produced nothing new. Updating from its result would
+            # overwrite good state with None/[] (and persist that to disk).
+            if not isinstance(result_dict, dict) or result_dict.get("status") in _FAILED_STATUSES:
+                logger.debug(f"{tool_name}: failed result, state left unchanged")
+                return
+
             if tool_name == "net_convert":
                 net_file = result_dict.get("net_file")
                 logger.debug(f"net_convert result. {result_dict}")
@@ -729,19 +808,22 @@ class AgentSUMO:
                     logger.warning(f"net_convert: net_file is None. Full result. {result_dict}")
                     return
 
+                # net_convert builds a new base network (new area or rebuild),
+                # so it becomes the baseline for later policy comparisons.
+                # Policy tools change only current_network.
                 self.simulation_state["current_network"] = net_file
-                # Set baseline if not already set (first network generation)
-                if not self.simulation_state.get("baseline_network"):
-                    self.simulation_state["baseline_network"] = net_file
-                    logger.info(f"Baseline network set: {net_file}")
-                else:
-                    logger.info(f"Current network updated: {net_file}")
+                self.simulation_state["baseline_network"] = net_file
+                logger.info(f"Baseline network set: {net_file}")
 
             elif tool_name == "trip_generate":
-                self.simulation_state["current_trips"] = result_dict.get("trip_file")
+                if result_dict.get("trip_file"):
+                    self.simulation_state["current_trips"] = result_dict["trip_file"]
 
-            elif tool_name == "route_generate":
-                self.simulation_state["current_routes"] = result_dict.get("route_file")
+            elif tool_name in ["route_generate", "flow_generation_tool",
+                               "vehicle_generation_tool", "vehicle_type_edit_tool"]:
+                # Each of these writes a new route file to use from now on
+                if result_dict.get("route_file"):
+                    self.simulation_state["current_routes"] = result_dict["route_file"]
 
             elif tool_name in ["reduce_lanes_tool", "edge_edit_tool", "speed_limit_edit_tool"]:
                 # Policy tools update current_network (but keep baseline unchanged)
@@ -750,33 +832,46 @@ class AgentSUMO:
                     self.simulation_state["current_network"] = modified_net
                     logger.info(f"Policy applied: current_network = {modified_net}")
                     logger.info(f"Baseline remains: {self.simulation_state.get('baseline_network')}")
+                # Deleted edges invalidate the old routes (the tool returns
+                # route_file None: "New route file needed")
+                if tool_name == "edge_edit_tool" and modified_net:
+                    self.simulation_state["current_routes"] = None
 
             elif tool_name == "sumo_runner":
-                self.simulation_state["last_results"] = result_dict.get("output_files")
+                if result_dict.get("output_files"):
+                    self.simulation_state["last_results"] = result_dict["output_files"]
 
             elif tool_name == "xml_to_sqlite_tool":
                 # When SQLite DB is created
                 db_file = result_dict.get("db_file")
                 simulation_id = result_dict.get("simulation_id")
-                metadata = result_dict.get("metadata", {})
+                metadata = result_dict.get("metadata") or {}
+
+                if not db_file or not simulation_id:
+                    logger.warning(f"xml_to_sqlite_tool: db_file or simulation_id missing. Full result. {result_dict}")
+                    return
 
                 self.simulation_state["current_db"] = db_file
 
-                # Update simulation list
+                # Update simulation list. Each area has its own DB, so record
+                # which DB the simulation lives in; the context lists only
+                # those of current_db.
                 sim_info = {
                     "simulation_id": simulation_id,
-                    "trip_count": metadata.get("trip_count", 0)
+                    "trip_count": metadata.get("trip_count", 0),
+                    "db_file": db_file
                 }
 
-                # Remove duplicates then append
+                # Remove duplicates (same id in the same DB) then append
                 self.simulation_state["simulations"] = [
                     s for s in self.simulation_state.get("simulations", [])
-                    if s.get("simulation_id") != simulation_id
+                    if (s.get("simulation_id"), s.get("db_file")) != (simulation_id, db_file)
                 ]
                 self.simulation_state["simulations"].append(sim_info)
 
+                db_sims = [s for s in self.simulation_state["simulations"] if s.get("db_file") == db_file]
                 logger.info(f"State update. SQLite DB = {db_file}")
-                logger.info(f"   {len(self.simulation_state['simulations'])} simulations in current DB")
+                logger.info(f"   {len(db_sims)} simulations in current DB")
 
         except Exception as e:
             logger.debug(f"State update failed (ignored). {e}")
@@ -830,6 +925,15 @@ class AgentSUMO:
                         logger.warning(f"State restore: {key}={path} no longer exists, discarding")
                         saved[key] = None
                         valid = False
+
+                # Drop simulation entries without an id. Older versions saved
+                # {"simulation_id": None} from failed xml_to_sqlite_tool runs,
+                # which broke the context on every chat() after a restart.
+                sims = saved.get("simulations")
+                saved["simulations"] = [
+                    s for s in (sims if isinstance(sims, list) else [])
+                    if isinstance(s, dict) and s.get("simulation_id")
+                ]
 
                 self.simulation_state.update(saved)
                 logger.info(f"State restored from {state_file.name}")
@@ -988,35 +1092,48 @@ class AgentSUMO:
 
     async def _check_and_enable_sqlite_if_needed(self):
         """
-        Activate SQLite MCP. Connect if DB exists and MCP is not connected.
+        Keep SQLite MCP connected to current_db.
+
+        Connects on first use, and reconnects when current_db has moved to
+        another file (xml_to_sqlite_tool writes one {tag}_analysis.db per
+        area), so read_query never runs against the previous area's DB.
         """
         current_db = self.simulation_state.get("current_db")
+        client = self.mcp_clients.get("sqlite")
 
-        # Already connected? Skip.
-        if self.mcp_clients.get("sqlite") and self.mcp_clients["sqlite"].is_connected:
-            self.simulation_state["sqlite_enabled"] = True
-            return
+        if client and client.is_connected:
+            # Already connected to the right DB? Skip.
+            if not current_db or _same_path(client.db_path, current_db):
+                self.simulation_state["sqlite_enabled"] = True
+                return
 
-        # DB exists and not yet activated -> first activation
+            # The tools keep their names, so only the connection is swapped
+            logger.info(f"Analysis DB changed. Reconnecting SQLite MCP... ({client.db_path} -> {current_db})")
+            self.simulation_state["sqlite_enabled"] = False
+            await self._close_client("sqlite")
+
+        # DB exists and not yet activated -> first activation (or reconnect)
         if current_db:
-            logger.info(f"First SQLite MCP activation in progress... (DB. {current_db})")
+            logger.info(f"SQLite MCP activation in progress... (DB. {current_db})")
 
             try:
                 from agentsumo.client.sqlite_mcp_client import SQLiteMCPClient
 
-                # Connect to new DB (first activation, not reconnect)
-                self.mcp_clients["sqlite"] = SQLiteMCPClient(current_db)
-                await self.mcp_clients["sqlite"].__aenter__()
+                await self._open_client("sqlite", SQLiteMCPClient(current_db))
 
-                # Load and add tools
+                # Load and add tools (once: a reconnect reuses the same names)
                 sqlite_tools = await self.mcp_clients["sqlite"].list_tools()
-                new_claude_tools = self._convert_mcp_to_claude_tools(sqlite_tools)
+                known = {t["name"] for t in self.tools}
+                new_claude_tools = [
+                    t for t in self._convert_mcp_to_claude_tools(sqlite_tools)
+                    if t["name"] not in known
+                ]
                 self.tools.extend(new_claude_tools)
 
                 # Update state
                 self.simulation_state["sqlite_enabled"] = True
 
-                logger.info(f"SQLite MCP activation complete ({len(sqlite_tools)} tools added)")
+                logger.info(f"SQLite MCP activation complete ({len(new_claude_tools)} tools added)")
                 logger.info(f"   -> Detailed SQL queries are now available.")
 
             except Exception as e:

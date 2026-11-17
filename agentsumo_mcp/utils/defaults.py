@@ -37,7 +37,7 @@ def ensure_vehicle_types_default(sim_dir: Path | str) -> Path:
     sim_dir = Path(sim_dir)
     try:
         sim_dir.mkdir(parents=True, exist_ok=True)
-    except PermissionError as exc:
+    except OSError as exc:  # PermissionError, or EROFS on a read-only "/"
         raise PermissionError(
             f"Cannot create simulation directory {sim_dir}: {exc}. "
             f"Set AGENTSUMO_MCP_OUTPUT_BASE in your environment to a "

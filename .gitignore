@@ -9,6 +9,7 @@ __pycache__/
 *$py.class
 *.so
 *.egg-info/
+dist/
 .Python
 .venv/
 venv/
@@ -27,7 +28,7 @@ agentsumo/output/
 # them stays visible to git (negation cannot rescue a child of an
 # ignored parent).
 output/**
-!output/
+!/output/
 !output/*/
 !output/**/.gitkeep
 

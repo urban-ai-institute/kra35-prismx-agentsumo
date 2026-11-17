@@ -128,8 +128,8 @@ osm_extract → net_convert → trip_generate → route_generate → sumo_runner
 
 Route files contain explicit edge lists. If edges are deleted from the network, those routes become invalid.
 
-- **After `edge_edit_tool` (road deletion):** MUST regenerate trips and routes. Workflow: `edge_edit → trip_generate → route_generate → sumo_runner`
-- **After other policy tools (`reduce_lanes`, `speed_limit_edit`, `tls_optimize`):** Can reuse existing trip file. Edges still exist, only properties changed.
+- **After `edge_edit_tool` (road deletion):** MUST regenerate trips and routes. Workflow: `edge_edit_tool → trip_generate → route_generate → sumo_runner`
+- **After other policy tools (`reduce_lanes_tool`, `speed_limit_edit_tool`, `tls_offset_tool`, `tls_adaptation_tool`):** Can reuse existing trip file. Edges still exist, only properties changed.
 - **After guide-based editing (rerouter, VSS, vType):** Can reuse existing route file. Network is unchanged.
 
 ### xml_to_sqlite_tool — Naming Convention
@@ -137,7 +137,8 @@ Route files contain explicit edge lists. If edges are deleted from the network, 
 When calling `xml_to_sqlite_tool`, you MUST always provide both `simulation_id` and `description`. These are displayed in the UI for scenario comparison — without them, users cannot distinguish simulations and comparison queries become impossible.
 
 **simulation_id format:** `{N}_{scenario_name}`
-- N = sequential number (check current simulations in context to determine the next number)
+- N = sequential number: continue after the highest N among the current DB's simulations listed in the context
+- Reusing an existing simulation_id REPLACES that simulation's stored results, so only reuse one when the user wants a scenario re-run
 - scenario_name = short English descriptor
 - Examples: `1_baseline`, `2_road_closure_teheran`, `3_lane_reduction_gangnam`
 
@@ -291,12 +292,15 @@ Proceed with this plan?
 3. trip_generate (Baseline trips)
 4. route_generate (trips -> routes)
 5. sumo_runner (Baseline simulation)
-6. reduce_lanes (Teheran-ro, 1-lane reduction)
-7. sumo_runner (Policy 1: lane reduction)
-8. read_query (compare Baseline vs Policy 1 -> identify congestion hotspots)
-9. tls_optimize (signal optimization at hotspots)
-10. sumo_runner (Policy 2: lane reduction + signal optimization)
-11. read_query (full comparison: Baseline vs Policy 1 vs Policy 2)
+6. xml_to_sqlite_tool (simulation_id 1_baseline)
+7. reduce_lanes_tool (Teheran-ro, 1-lane reduction, on baseline_network)
+8. sumo_runner (Policy 1: lane reduction)
+9. xml_to_sqlite_tool (simulation_id 2_lane_reduction_teheran)
+10. read_query (compare Baseline vs Policy 1 -> identify congestion hotspots)
+11. tls_adaptation_tool (signal timing on the lane-reduced network)
+12. sumo_runner (Policy 2: lane reduction + signal optimization, signal file in additional_files)
+13. xml_to_sqlite_tool (simulation_id 3_lane_reduction_tls_teheran)
+14. read_query (full comparison: Baseline vs Policy 1 vs Policy 2)
 ```
 
 ---
@@ -361,7 +365,7 @@ After `sumo_runner`, the following tables are available via `read_query`:
 - arrival (s), arrivalLane, arrivalPos (m), arrivalSpeed (m/s)
 - duration (s), routeLength (m), waitingTime (s), waitingCount, stopTime (s), timeLoss (s)
 - rerouteNo, devices, vType, speedFactor, vaporized
-- CO_abs (mg), CO2_abs (mg), HC_abs (mg), PMx_abs (mg), NOx_abs (mg), fuel_abs (ml), electricity_abs (Wh)
+- CO_abs (mg), CO2_abs (mg), HC_abs (mg), PMx_abs (mg), NOx_abs (mg), fuel_abs (mg), electricity_abs (Wh)
 
 **edge_metrics** (PK: simulation_id, edge_id, interval_begin) — Per-edge aggregated data from edgeData output:
 - edge_id, interval_begin (s), interval_end (s)
@@ -372,6 +376,7 @@ After `sumo_runner`, the following tables are available via `read_query`:
 - Emission totals: CO_abs, CO2_abs, HC_abs, PMx_abs, NOx_abs, fuel_abs, electricity_abs
 - Emission per-meter: CO_normed, CO2_normed, HC_normed, PMx_normed, NOx_normed, fuel_normed, electricity_normed
 - Emission per-vehicle: CO_perVeh, CO2_perVeh, HC_perVeh, PMx_perVeh, NOx_perVeh, fuel_perVeh, electricity_perVeh
+- Values SUMO did not write are NULL, not 0: an edge no vehicle used has NULL speed/traveltime/timeLoss. Add `IS NOT NULL` when ranking ascending (NULL sorts first); use COALESCE(density, 0) for averages over all edges
 
 **Query Examples:**
 ```sql

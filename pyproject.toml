@@ -8,13 +8,16 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     # AgentSUMO MCP server (published separately on PyPI)
-    "agentsumo-mcp>=0.1.2",
+    "agentsumo-mcp>=0.1.3",
     # Reasoning backend
     "anthropic>=0.39.0",
     # Configuration loading
     "python-dotenv>=1.0.0",
     # Web interface
     "fastapi>=0.109.0",
+    # Starlette 1.0 dropped TemplateResponse(name, context), which web/app.py
+    # uses; with 1.x the web UI answers every page with a 500.
+    "starlette<1.0",
     "uvicorn[standard]>=0.27.0",
     "websockets>=12.0",
     "jinja2>=3.1.0",
@@ -27,6 +30,9 @@ dependencies = [
     "folium>=0.20.0",
     # SUMO + XML
     "sumolib>=1.24.0",
+    # TraCI drives sumo_runner. sumolib bundled it up to 1.25; from 1.26
+    # it is a separate package, so a fresh install had no traci at all.
+    "traci>=1.24.0",
     "lxml>=5.0.0",
     "rtree>=1.0.0",
     "osmium>=4.1.1",
@@ -38,8 +44,14 @@ dependencies = [
     "ddgs>=9.0.0",
     "certifi>=2025.8.3",
     # MCP protocol library (also a transitive dep of agentsumo-mcp, but
-    # imported directly by agentsumo/client)
-    "mcp[cli]>=1.13.1",
+    # imported directly by agentsumo/client). mcp 2.x removed FastMCP (used by
+    # agentsumo-mcp) and the low-level Server decorators (used by
+    # mcp-server-sqlite), so neither server starts on 2.x.
+    "mcp[cli]>=1.13.1,<2",
+    # SQLite MCP Server (Anthropic, archived upstream). 2025.4.25 is the first
+    # release with underscore tool names (read_query, ...); 0.6.x uses
+    # hyphens (read-query) and does not match the agent's prompts.
+    "mcp-server-sqlite>=2025.4.25",
 ]
 
 [build-system]
@@ -50,8 +62,15 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agentsumo*"]
+# Not "agentsumo*": that also matches agentsumo_mcp, which the agentsumo-mcp
+# dependency installs, and the two distributions would own the same files.
+include = ["agentsumo", "agentsumo.*"]
 exclude = ["data*", "output*", "checkpoints*", "tests*", "__pycache__*", "*.egg-info*", "sumo_mcp*", "examples*"]
 
 [tool.setuptools.package-data]
-agentsumo = ["*.txt", "*.json", "*.xml"]
+agentsumo = [
+    "*.txt", "*.json", "*.xml",
+    # Prompt template and additional-file guides read at runtime
+    "agent/prompts/templates/*.md",
+    "agent/additional_files_guide/*.md",
+]

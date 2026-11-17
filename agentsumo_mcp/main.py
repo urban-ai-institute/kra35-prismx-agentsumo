@@ -5,6 +5,8 @@ This is the entry point for the modular SUMO MCP Server.
 All tools are registered here and imported from their respective modules.
 """
 
+import logging
+
 from mcp.server.fastmcp import FastMCP
 from typing import Dict, Any, List
 
@@ -24,6 +26,10 @@ from agentsumo_mcp.customization.traffic_lights import TrafficLightManager
 from agentsumo_mcp.visualization.network_plotter import NetworkPlotter
 from agentsumo_mcp.visualization.edge_plotter import EdgePlotter
 from agentsumo_mcp.visualization.data_plotter import DataPlotter
+
+# No handler of its own: records go to the root logger, which FastMCP
+# points at stderr (stdout is the MCP stdio channel).
+logger = logging.getLogger("agentsumo_mcp.main")
 
 # Initialize MCP server
 mcp = FastMCP("SUMO Baseline")
@@ -190,7 +196,9 @@ def trip_generate(
     Example: {"O_lon": "pickup_lng", "O_lat": "pickup_lat", "D_lon": "dropoff_lng", "D_lat": "dropoff_lat", "O_time_relative": "start_sec"}
 
     === RETURNS ===
-    - trip_file: Path to generated .trips.xml file (pass to route_generate)
+    - trip_file: Path to generated .trips.xml file (pass to route_generate).
+      RandomOD writes one file per traffic_condition (<net>_<condition>.trips.xml),
+      so several demand levels can coexist; always pass the returned path on.
     - trip_count: Number of trips generated
     """
     if trip_type == "RandomOD" and traffic_condition is None:
@@ -265,7 +273,10 @@ def sumo_runner(
     - output_files: List of result file paths [tripinfo, edgedata, edgedata_emission]
     - summary_xml: Path to summary.xml file. ALWAYS pass this to xml_to_sqlite_tool(summary_xml=...) for dashboard time-series charts.
     - replay_file: JSON file for web visualization replay
+    - sumo_log: SUMO's own messages (warnings and errors) for this run
     - simulation_time: Wall-clock execution time in seconds
+    On failure, status is "error", the message carries SUMO's error lines, and
+    output_files/summary_xml are empty: fix the input instead of converting.
     """
     return simulation_runner.run(
         net_file=net_file, trip_file=trip_file, route_file=route_file,
@@ -291,7 +302,7 @@ def edge_edit_tool(
 
     ⚠️🚨 CRITICAL: After using this tool, you MUST regenerate trips and routes!
     Route files contain explicit edge lists - if those edges are deleted, the route file becomes INVALID!
-    Workflow: edge_edit → trip_generate → route_generate → sumo_runner (REQUIRED!)
+    Workflow: edge_edit_tool → trip_generate → route_generate → sumo_runner (REQUIRED!)
 
     🌟 REALISTIC USAGE: Specify reference_location + radius_km for partial road closure!
 
@@ -352,7 +363,7 @@ def reduce_lanes_tool(
     Reduce lanes on road segments with two modes.
 
     ✅ Trip file can be reused - edges still exist, only lane count changed.
-    Workflow: reduce_lanes → sumo_runner (reuse existing trip file)
+    Workflow: reduce_lanes_tool → sumo_runner (reuse existing trip file)
 
     **MODE 1: Relative Reduction (RECOMMENDED for most policies)**
     - reduce_by: Reduce N lanes from each segment
@@ -419,7 +430,7 @@ def speed_limit_edit_tool(
     Modify speed limits on specific road segments (supports partial application).
 
     ✅ Trip file can be reused - edges still exist, only speed limit changed.
-    Workflow: speed_limit_edit → sumo_runner (reuse existing trip file)
+    Workflow: speed_limit_edit_tool → sumo_runner (reuse existing trip file)
 
     REALISTIC USAGE: Use reference_location + radius_km for localized speed limit changes!
 
@@ -804,6 +815,9 @@ def xml_to_sqlite_tool(
     - edge_metrics: (simulation_id, edge_id, interval_begin, interval_end, speed, density, waitingTime,
                      timeLoss, occupancy, entered, left, ...)
       * PRIMARY KEY: (simulation_id, edge_id, interval_begin)
+      * Metrics SUMO did not measure are NULL (speed, traveltime, density, timeLoss, emissions, ...
+        on edges no vehicle used). AVG() skips them; SQLite sorts NULL first in ascending
+        order, so add "speed IS NOT NULL" when ranking the slowest edges.
     - network_state: (simulation_id, time, running, halting, waiting, meanSpeed, meanSpeedRelative, ...)
       * Network-wide time-series from summary.xml — 1 row per simulation second
       * Enables temporal analysis: congestion onset, performance curves, before/after comparison
@@ -845,7 +859,10 @@ def xml_to_sqlite_tool(
             - Check current simulations in context to determine N.
             - Use short, descriptive English names.
             - Examples: "1_baseline", "2_road_closure_teheran", "3_lane_reduction_gangnam",
-              "4_tls_optimize_seocho", "5_speed_limit_gangnam"
+              "4_tls_offset_seocho", "5_speed_limit_gangnam"
+            - An existing simulation_id is REPLACED (all its rows deleted, then
+              re-imported; the result has "replaced": true). Use the next N for a
+              new scenario. Without simulation_id a new sim_<timestamp> id is created.
         net_file: Path to network (.net.xml) file used in this simulation
         route_file: Path to route (.rou.xml) file used in this simulation
         description: REQUIRED — NEVER leave as None!
@@ -945,9 +962,24 @@ def simulation_report_tool(
     import sumolib
     from agentsumo_mcp.utils.path_utils import get_output_path
 
+    # sqlite3.connect() would create an empty file for a wrong path, which
+    # then breaks later imports into it; report the path instead.
+    if not db_path or not Path(db_path).is_file():
+        return {"status": "error", "message": f"Database not found: {db_path}"}
+
     try:
         conn = sqlite3_mod.connect(db_path)
         conn.row_factory = sqlite3_mod.Row
+
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='simulations'"
+        ).fetchone():
+            conn.close()
+            return {
+                "status": "error",
+                "message": f"Not an analysis database (no simulations table): {db_path}. "
+                           "Run xml_to_sqlite_tool first and pass the db_file it returns."
+            }
 
         # Get all scenarios (skip auto-generated ones)
         sims = conn.execute(
@@ -1011,7 +1043,7 @@ def simulation_report_tool(
             r = conn.execute("""
                 SELECT COUNT(*) as trips, AVG(duration) as dur, AVG(waitingTime) as wait,
                        AVG(timeLoss) as tl, AVG(routeLength) as rlen,
-                       SUM(CO2_abs)/1e6 as co2_kg, SUM(fuel_abs)/1e6 as fuel_L,
+                       SUM(CO2_abs)/1e6 as co2_kg, SUM(fuel_abs)/1e6 as fuel_kg,
                        SUM(NOx_abs)/1e3 as nox_g, SUM(PMx_abs)/1e3 as pm_g
                 FROM trips WHERE simulation_id=?
             """, (sid,)).fetchone()
@@ -1035,9 +1067,11 @@ def simulation_report_tool(
                 "avg_duration": r['dur'],
                 "avg_wait": r['wait'],
                 "avg_timeloss": r['tl'],
-                "avg_speed_kmh": round((spd['s'] or 0) * 3.6, 1),
+                # None (shown as "—") when no vehicle drove, e.g. 0 completed trips
+                "avg_speed_kmh": round(spd['s'] * 3.6, 1) if spd['s'] is not None else None,
                 "co2_kg": round(r['co2_kg'] or 0, 1),
-                "fuel_L": round(r['fuel_L'] or 0, 2),
+                # SUMO >= 1.14 writes fuel_abs in mg (mass, not volume)
+                "fuel_kg": round(r['fuel_kg'] or 0, 2),
                 "nox_g": round(r['nox_g'] or 0, 1),
                 "pm_g": round(r['pm_g'] or 0, 2),
                 "duration_dist": dist
@@ -1050,7 +1084,9 @@ def simulation_report_tool(
             net_for_names = sumolib.net.readNet(net_file)
             rows = conn.execute("""
                 SELECT edge_id, AVG(density) as d, AVG(speed) as s, AVG(waitingTime) as w
-                FROM edge_metrics WHERE simulation_id=? AND density > 0 GROUP BY edge_id
+                FROM edge_metrics WHERE simulation_id=? AND density > 0
+                  AND speed IS NOT NULL AND waitingTime IS NOT NULL
+                GROUP BY edge_id
             """, (base_sid,)).fetchall()
 
             road_data = {}
@@ -1094,7 +1130,8 @@ def simulation_report_tool(
             return f"{s/60:.1f} min"
 
         def diff_pct(a, b):
-            if not a or a == 0: return "—"
+            # a scenario with 0 completed trips has no averages (None)
+            if a is None or b is None or a == 0: return "—"
             pct = (b - a) / abs(a) * 100
             sign = "+" if pct > 0 else ""
             return f"{sign}{pct:.0f}%"
@@ -1110,9 +1147,9 @@ def simulation_report_tool(
             ("Avg Trip Duration", "avg_duration", True, fmt_time),
             ("Avg Waiting Time", "avg_wait", True, fmt_time),
             ("Avg Time Loss", "avg_timeloss", True, fmt_time),
-            ("Avg Speed", "avg_speed_kmh", False, lambda v: f"{v:.1f} km/h"),
+            ("Avg Speed", "avg_speed_kmh", False, lambda v: "—" if v is None else f"{v:.1f} km/h"),
             ("Total CO₂", "co2_kg", True, lambda v: f"{v:,.1f} kg"),
-            ("Total Fuel", "fuel_L", True, lambda v: f"{v:,.2f} L"),
+            ("Total Fuel", "fuel_kg", True, lambda v: f"{v:,.2f} kg"),
             ("Total NOx", "nox_g", True, lambda v: f"{v:,.1f} g"),
             ("Completed Trips", "trips", False, lambda v: f"{v:,}"),
         ]
@@ -1176,7 +1213,7 @@ def simulation_report_tool(
 
         # Emission comparison
         emission_rows = ""
-        emission_metrics = [("CO₂", "co2_kg", "kg"), ("Fuel", "fuel_L", "L"), ("NOx", "nox_g", "g"), ("PM", "pm_g", "g")]
+        emission_metrics = [("CO₂", "co2_kg", "kg"), ("Fuel", "fuel_kg", "kg"), ("NOx", "nox_g", "g"), ("PM", "pm_g", "g")]
         for label, key, unit in emission_metrics:
             row = f"<tr><td style='color:#8aa69c;'>{label}</td>"
             for s in scenarios:

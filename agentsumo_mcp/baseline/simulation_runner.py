@@ -5,10 +5,13 @@ Uses TraCI for simulation execution with replay frame capture.
 """
 
 import os
+import sys
 import json
 import time
 import datetime
 import logging
+import contextlib
+import subprocess
 import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -116,11 +119,13 @@ class SimulationRunner:
                 output_files, duration, timestamp
             )
 
-            # Run simulation via TraCI
-            result = self._run_simulation_traci(
-                config_file, output_path, output_files, duration, prefix, timestamp,
-                enable_rerouting=has_rerouter
-            )
+            # Run simulation via TraCI. traci print()s its connection retries,
+            # and stdout is this MCP server's JSON-RPC channel.
+            with contextlib.redirect_stdout(sys.stderr):
+                result = self._run_simulation_traci(
+                    config_file, output_path, output_files, duration, prefix, timestamp,
+                    enable_rerouting=has_rerouter
+                )
 
             # Prepare result
             return self._prepare_result(
@@ -405,10 +410,11 @@ class SimulationRunner:
         input_tag = SubElement(cfg_root, "input")
         SubElement(input_tag, "net-file", {"value": file_names["net_file"]})
 
-        if file_names["route_file"]:
-            SubElement(input_tag, "route-files", {"value": file_names["route_file"]})
-        elif file_names["trip_file"]:
-            SubElement(input_tag, "trip-files", {"value": file_names["trip_file"]})
+        # SUMO has no trip-files option: trips are loaded through route-files
+        # and routed at departure. A route file is still preferred.
+        route_files = file_names["route_file"] or file_names["trip_file"]
+        if route_files:
+            SubElement(input_tag, "route-files", {"value": route_files})
 
         # Additional files
         additional_files_list = [add_file, "vehicle_types.add.xml"]
@@ -450,16 +456,21 @@ class SimulationRunner:
         Captures vehicle position frames for post-simulation replay.
         """
         import traci
+        from sumolib.miscutils import getFreeSocketPort
 
         start_time = time.time()
         sumo_binary = self.environment.get_binary_path("sumo")
+
+        # Everything SUMO prints (stdout and stderr, warnings included) goes to
+        # this log next to the outputs: stdout is the MCP channel, and the log
+        # is where SUMO's error is read back from when the run fails.
+        sumo_log = output_path / f"{prefix}_sumo_{timestamp}.log"
 
         sumo_cmd = [
             sumo_binary,
             "-c", str(config_file),
             "--device.emissions.probability", "1.0",
             "--device.rerouting.probability", "1.0",
-            "--no-warnings"
         ]
 
         if enable_rerouting:
@@ -468,19 +479,32 @@ class SimulationRunner:
 
         logger.info(f"Running SUMO simulation (TraCI): {config_file.name}")
 
+        sumo_process = None
+        progress_file = output_path / ".sim_progress.json"
+
         try:
             # Set SUMO_HOME for TraCI
             sumo_home = self.environment.SUMO_HOME
             if sumo_home:
                 os.environ["SUMO_HOME"] = sumo_home
 
-            traci.start(sumo_cmd, traceFile=None, label="agentsumo")
+            # Launch SUMO on a port chosen here instead of via traci.start():
+            # when traci.start() picks the port itself, a SUMO that exits while
+            # loading is relaunched up to 60 times (~60 s) and its error is
+            # lost. traci.init() with the process still retries while a large
+            # network loads, but gives up as soon as SUMO has exited.
+            port = getFreeSocketPort()
+            with open(sumo_log, "w") as log:
+                sumo_process = subprocess.Popen(
+                    sumo_cmd + ["--remote-port", str(port)],
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT
+                )
+            traci.init(port, label="agentsumo", proc=sumo_process)
 
             step_count = 0
             replay_interval = 5  # Capture frame every N steps
             wall_timeout = max(duration * 2, 600)
             replay_frames = []  # Accumulate frames in memory
-            progress_file = output_path / ".sim_progress.json"
             progress_interval = 10  # Write progress every N steps
             logger.info(f"Progress file path: {progress_file}, output_path exists: {output_path.exists()}")
 
@@ -544,6 +568,8 @@ class SimulationRunner:
                 pass
 
             traci.close()
+            if sumo_process.returncode:
+                raise RuntimeError("SUMO failed while finishing the simulation")
 
             # Save replay file
             replay_filename = f"{prefix}_replay_{timestamp}.json"
@@ -566,6 +592,7 @@ class SimulationRunner:
             result = TraCIResult()
             result.elapsed = elapsed
             result.replay_file = replay_filename
+            result.sumo_log = str(sumo_log)
             return result
 
         except Exception as e:
@@ -573,19 +600,45 @@ class SimulationRunner:
                 traci.close()
             except Exception:
                 pass
+            # Let a failing SUMO finish writing its log; stop one that hangs
+            exit_note = ""
+            if sumo_process is not None:
+                try:
+                    sumo_process.wait(timeout=5)
+                    if sumo_process.returncode:
+                        exit_note = f"SUMO exited with code {sumo_process.returncode}"
+                except subprocess.TimeoutExpired:
+                    sumo_process.kill()
+                    sumo_process.wait()
+            try:
+                progress_file.unlink(missing_ok=True)
+            except Exception:
+                pass
 
             elapsed = time.time() - start_time
-            logger.error(f"TraCI simulation failed: {e}")
+            sumo_errors = self._sumo_errors(sumo_log)
+            logger.error(f"TraCI simulation failed: {e}\n{sumo_errors}")
 
             class ErrorResult:
                 returncode = 1
                 stdout = ""
-                stderr = str(e)
+                stderr = "\n".join(filter(None, [str(e), exit_note, sumo_errors]))
 
             result = ErrorResult()
             result.elapsed = elapsed
             result.replay_file = None
+            result.sumo_log = str(sumo_log)
             return result
+
+    @staticmethod
+    def _sumo_errors(sumo_log: Path, max_lines: int = 20) -> str:
+        """Return SUMO's error lines from its log (the log's tail if it has none)."""
+        try:
+            lines = sumo_log.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return ""
+        errors = [line for line in lines if line.startswith(("Error:", "Quitting"))]
+        return "\n".join((errors or lines)[-max_lines:])
 
     def _prepare_result(
         self, result: Any, output_path: Path,
@@ -598,40 +651,55 @@ class SimulationRunner:
         summary_abs = str(output_path / output_files["summary"])
 
         replay_file = getattr(result, 'replay_file', None)
+        replay_abs = str(output_path / replay_file) if replay_file else None
+        sumo_log = getattr(result, 'sumo_log', None)
 
         if result.returncode != 0:
+            # The run failed: report SUMO's error and hand out no output
+            # paths, so nothing downstream (xml_to_sqlite, plots) is pointed
+            # at files that were never written or are incomplete.
             return {
-                "status": "warning",
-                "output_files": [tripinfo_abs, edgedata_abs, edgedata_emission_abs],
-                "summary_xml": summary_abs,
-                "message": f"Simulation completed with warnings in {result.elapsed:.2f} seconds\n{result.stderr}",
+                "status": "error",
+                "output_files": [],
+                "summary_xml": None,
+                "replay_file": None,
+                "sumo_log": sumo_log,
+                "message": (
+                    f"Simulation failed after {result.elapsed:.2f} seconds:\n{result.stderr}\n"
+                    f"Full SUMO log: {sumo_log}"
+                ),
                 "simulation_time": result.elapsed,
                 "metadata": {
                     "working_directory": str(base_dir),
-                    "absolute_tripinfo": tripinfo_abs,
-                    "absolute_edgedata": edgedata_abs,
-                    "absolute_edgedata_emission": edgedata_emission_abs,
-                    "absolute_summary": summary_abs,
                     "return_code": result.returncode,
                     "stdout": result.stdout,
                     "stderr": result.stderr,
-                    "replay_file": replay_file
+                    "replay_file": replay_file,
+                    "sumo_log": sumo_log
                 }
             }
 
+        def existing(path: str) -> Optional[str]:
+            return path if Path(path).exists() else None
+
         return {
             "status": "success",
-            "output_files": [tripinfo_abs, edgedata_abs, edgedata_emission_abs],
-            "summary_xml": summary_abs,
+            "output_files": [
+                p for p in (tripinfo_abs, edgedata_abs, edgedata_emission_abs) if existing(p)
+            ],
+            "summary_xml": existing(summary_abs),
+            "replay_file": existing(replay_abs) if replay_abs else None,
+            "sumo_log": sumo_log,
             "message": f"Simulation executed successfully in {result.elapsed:.2f} seconds.",
             "simulation_time": result.elapsed,
             "metadata": {
                 "working_directory": str(base_dir),
-                "absolute_tripinfo": tripinfo_abs,
-                "absolute_edgedata": edgedata_abs,
-                "absolute_edgedata_emission": edgedata_emission_abs,
-                "absolute_summary": summary_abs,
+                "absolute_tripinfo": existing(tripinfo_abs),
+                "absolute_edgedata": existing(edgedata_abs),
+                "absolute_edgedata_emission": existing(edgedata_emission_abs),
+                "absolute_summary": existing(summary_abs),
                 "return_code": result.returncode,
-                "replay_file": replay_file
+                "replay_file": replay_file,
+                "sumo_log": sumo_log
             }
         }

@@ -14,11 +14,15 @@ from mcp.client.stdio import stdio_client
 from typing import Any, Optional, List
 from pathlib import Path
 import asyncio
+import importlib.util
 import logging
-
-from agentsumo.core.config import AgentSUMOConfig
+import sys
 
 logger = logging.getLogger("agentsumo.sqlite_mcp_client")
+
+# mcp-server-sqlite ships no __main__ module, so call its console-script
+# entry point directly.
+_SERVER_ENTRY = "from mcp_server_sqlite import main; main()"
 
 
 class SQLiteMCPClient:
@@ -26,11 +30,11 @@ class SQLiteMCPClient:
     Client that communicates with the SQLite MCP Server.
 
     Uses the Python-based SQLite MCP Server.
-    uv run mcp-server-sqlite --db-path <path>
+    mcp-server-sqlite --db-path <path>
 
     Note. Uses Anthropic's official MCP server example.
     Original repo - https://github.com/modelcontextprotocol/servers-archived/tree/main/src/sqlite
-    (included inside the project as the sqlite-mcp-server folder)
+    (installed from PyPI as the mcp-server-sqlite dependency)
 
     Features:
     - SQL query execution (read_query / write_query / create_table)
@@ -87,17 +91,21 @@ class SQLiteMCPClient:
         logger.info("Connecting to SQLite MCP Server")
 
         # Server parameters (using Python-based MCP server)
-        # Anthropic's official SQLite MCP server example is bundled inside the project
+        # Anthropic's official SQLite MCP server example, installed from PyPI
         # Original - https://github.com/modelcontextprotocol/servers-archived/tree/main/src/sqlite
-        sqlite_server_path = AgentSUMOConfig.PROJECT_ROOT / "sqlite-mcp-server" / "src" / "sqlite"
-        
+        if importlib.util.find_spec("mcp_server_sqlite") is None:
+            raise RuntimeError(
+                "mcp-server-sqlite is not installed in this environment. "
+                "Reinstall AgentSUMO with `uv pip install -e .`"
+            )
+
+        # Launch with this client's own interpreter so the server sees the
+        # same site-packages (a bare "python" on PATH may not)
         server_params = StdioServerParameters(
-            command="uv",
+            command=sys.executable,
             args=[
-                "--directory",
-                str(sqlite_server_path),
-                "run",
-                "mcp-server-sqlite",
+                "-c",
+                _SERVER_ENTRY,
                 "--db-path",
                 self.db_path
             ],

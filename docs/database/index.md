@@ -6,7 +6,7 @@ representation of simulation results. This page documents that schema so
 custom SQL workflows can sit alongside the agent's natural-language access.
 
 The schema is defined in
-[`agentsumo_mcp/analysis/xml_to_sqlite.py`](https://github.com/mw-jeong/AgentSUMO/blob/main/agentsumo_mcp/analysis/xml_to_sqlite.py)
+[`agentsumo_mcp/analysis/xml_to_sqlite.py`](https://github.com/urban-ai-institute/kra35-prismx-agentsumo/blob/main/agentsumo_mcp/analysis/xml_to_sqlite.py)
 (`_create_schema`). All six tables are keyed by a `simulation_id` so
 multiple runs coexist in the same file and can be compared through
 ordinary SQL `JOIN`.
@@ -106,11 +106,15 @@ erDiagram
 
 ### `simulations`
 
-Run-level metadata. One row per `xml_to_sqlite_tool` invocation.
+Run-level metadata. One row per simulation. Importing with a
+`simulation_id` that already exists replaces that simulation: its rows are
+deleted from every table and the new results inserted, in one transaction.
+Without a `simulation_id`, a new unused `sim_<timestamp>` id is generated.
+Other simulations are never touched.
 
 | Column | Type | Description |
 |---|---|---|
-| `simulation_id` | TEXT (PK) | Caller-provided unique identifier (e.g., `"baseline"`, `"teheran_lane_reduction"`). |
+| `simulation_id` | TEXT (PK) | Caller-provided identifier (e.g., `"baseline"`, `"teheran_lane_reduction"`), or a generated `sim_<timestamp>`. |
 | `created_at` | TEXT | ISO-8601 timestamp at ingest. |
 | `vehicle_count` | INTEGER | Total trips ingested from `tripinfo.xml`. |
 | `net_file` | TEXT | Path to the SUMO network used for this run. |
@@ -155,7 +159,7 @@ dynamics and per-vehicle emission totals (HBEFA-based).
 | `HC_abs` | REAL | Total hydrocarbons (mg). |
 | `PMx_abs` | REAL | Total particulate matter (mg). |
 | `NOx_abs` | REAL | Total NOₓ (mg). |
-| `fuel_abs` | REAL | Total fuel consumed (mL). |
+| `fuel_abs` | REAL | Total fuel consumed (mg). |
 | `electricity_abs` | REAL | Total electricity consumed (Wh). |
 
 **Primary key:** `(simulation_id, trip_id)`.
@@ -211,6 +215,11 @@ emission columns come in three normalizations:
 - `*_abs` — total over the interval.
 - `*_normed` — length-and-time normalized.
 - `*_perVeh` — per-vehicle on the edge during the interval.
+
+Values SUMO does not write are stored as `NULL`, not 0: an edge no vehicle
+used in an interval has no `speed`, `traveltime` or `timeLoss`. Filter with
+`IS NOT NULL` when ranking (SQLite sorts `NULL` first in ascending order),
+and use `COALESCE(density, 0)` for network-wide averages over all edges.
 
 | Column | Type | Description |
 |---|---|---|
@@ -300,6 +309,7 @@ JOIN edge_info e
   ON e.simulation_id = em.simulation_id
  AND e.edge_id = em.edge_id
 WHERE em.simulation_id = 'baseline'
+  AND em.speed IS NOT NULL
 GROUP BY em.edge_id
 ORDER BY avg_speed ASC
 LIMIT 10;

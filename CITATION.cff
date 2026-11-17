@@ -26,7 +26,7 @@ authors:
 version: "0.1.2"
 date-released: "2026-06-05"
 license: MIT
-repository-code: "https://github.com/mw-jeong/AgentSUMO"
+repository-code: "https://github.com/urban-ai-institute/kra35-prismx-agentsumo"
 url: "https://agentsumo.readthedocs.io"
 keywords:
   - traffic-simulation

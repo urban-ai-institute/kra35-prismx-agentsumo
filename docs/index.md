@@ -152,7 +152,7 @@ If you use AgentSUMO in your research, please cite the paper:
 ## License
 
 AgentSUMO is released under the **MIT License**. See the
-[LICENSE](https://github.com/mw-jeong/AgentSUMO/blob/main/LICENSE) file in the
+[LICENSE](https://github.com/urban-ai-institute/kra35-prismx-agentsumo/blob/main/LICENSE) file in the
 repository for the full text.
 
 ```{toctree}
