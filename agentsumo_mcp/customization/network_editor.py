@@ -93,6 +93,12 @@ class NetworkEditor:
             else:
                 return {"status": "error", "message": "Either edge_ids, or (target_road_name + reference_location + radius), or target_road_name required"}
             
+            net = sumolib.net.readNet(net_file)
+            missing_edge_ids = [e for e in target_edge_ids if not net.hasEdge(e)]
+            target_edge_ids = [e for e in target_edge_ids if net.hasEdge(e)]
+            if not target_edge_ids:
+                return {"status": "error", "message": f"None of the given edges exist in the network: {missing_edge_ids}"}
+            
             # Use netconvert to remove edges
             output_path = get_output_path(output_dir)
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -112,7 +118,9 @@ class NetworkEditor:
             if result.returncode != 0:
                 return {"status": "error", "message": f"netconvert failed: {result.stderr.decode('utf-8')}"}
             
-            msg = f"{len(target_edge_ids)} edges containing '{target_road_name}' removed."
+            msg = f"{len(target_edge_ids)} edges removed" + (f" ({target_road_name})." if target_road_name else ".")
+            if missing_edge_ids:
+                msg += f" Not in the network, skipped: {missing_edge_ids}"
             return {
                 "status": "success", 
                 "net_file": str(net_file_copy), 
@@ -381,9 +389,12 @@ class NetworkEditor:
                 modified_edges = 0
                 total_lanes_before = 0
                 total_lanes_after = 0
+                touched_nodes = set()
+                edge_to_node = {}
                 
                 for edge in root.findall("edge"):
                     edge_id = edge.get("id")
+                    edge_to_node[edge_id] = edge.get("to")
                     if edge_id in target_edge_ids:
                         current_lanes = int(edge.get("numLanes", 1))
                         total_lanes_before += current_lanes
@@ -408,22 +419,68 @@ class NetworkEditor:
                                 logger.debug(f"  Removed {len(lanes_to_remove) - new_lanes} <lane> tags from {edge_id}")
                             
                             modified_edges += 1
+                            touched_nodes.update((edge.get("from"), edge.get("to")))
                         
                         total_lanes_after += new_lanes
                 
+                if modified_edges == 0:
+                    return {
+                        "status": "error",
+                        "message": f"No lanes changed: none of the {len(target_edge_ids)} target edges "
+                                   f"is in the network with more lanes than requested"
+                    }
+                
                 tree.write(edg_file, encoding="utf-8", xml_declaration=True)
                 
-                # Step 3: Rebuild .net.xml from Plain XML
-                # NOTE: Do NOT use --connection-files! Let netconvert auto-generate connections
-                # based on new numLanes. Old connections reference invalid lane indices.
-                logger.info(f"  Step 3: Rebuilding .net.xml with auto-generated junctions...")
-                subprocess.run([
+                # Step 3: Recompute lane connections only where lanes changed
+                # Old lane-to-lane connections at the junctions the modified edges
+                # touch reference lane indices that may no longer exist. Replace
+                # them with the same edge-to-edge movements (netconvert assigns the
+                # lanes), and let netconvert rebuild those junctions' signal
+                # programs. Every other junction keeps its original connections
+                # and programs, including OSM turn restrictions; rebuilding from
+                # nodes and edges alone would re-guess them network-wide and mix
+                # unrelated changes into the policy comparison.
+                logger.info(f"  Step 3: Recomputing {len(touched_nodes)} junctions...")
+                tll_file = Path(f"{temp_prefix}.tll.xml")
+                typ_file = Path(f"{temp_prefix}.typ.xml")
+                
+                con_tree = ET.parse(con_file)
+                con_root = con_tree.getroot()
+                movements = []
+                for con in list(con_root):
+                    if con.tag == "connection" and edge_to_node.get(con.get("from")) in touched_nodes:
+                        con_root.remove(con)
+                        if (con.get("from"), con.get("to")) not in movements:
+                            movements.append((con.get("from"), con.get("to")))
+                for from_edge, to_edge in movements:
+                    ET.SubElement(con_root, "connection", {"from": from_edge, "to": to_edge})
+                con_tree.write(con_file, encoding="utf-8", xml_declaration=True)
+                
+                touched_tls = {
+                    node.get("tl", node.get("id"))
+                    for node in ET.parse(nod_file).getroot().findall("node")
+                    if node.get("id") in touched_nodes and "traffic_light" in (node.get("type") or "")
+                }
+                tll_tree = ET.parse(tll_file)
+                tll_root = tll_tree.getroot()
+                for element in list(tll_root):
+                    tls_id = element.get("id") if element.tag == "tlLogic" else element.get("tl")
+                    if tls_id in touched_tls:
+                        tll_root.remove(element)
+                tll_tree.write(tll_file, encoding="utf-8", xml_declaration=True)
+                
+                rebuild_cmd = [
                     netconvert_path,
                     '--node-files', str(nod_file),
                     '--edge-files', str(edg_file),
-                    # NO --connection-files! (auto-generate based on new numLanes)
+                    '--connection-files', str(con_file),
+                    '--tllogic-files', str(tll_file),
                     '--output-file', str(net_file_final)
-                ], check=True, capture_output=True, text=True)
+                ]
+                if typ_file.exists():
+                    rebuild_cmd[1:1] = ['--type-files', str(typ_file)]
+                subprocess.run(rebuild_cmd, check=True, capture_output=True, text=True)
                 
                 logger.info(f"✅ Plain XML workflow completed")
                 
@@ -447,7 +504,7 @@ class NetworkEditor:
                 msg = f"{modified_edges} edges modified: {target_road_name} → {remain_lanes} lanes each"
                 msg += f" (Total: {total_lanes_before} → {total_lanes_after} lanes)"
             
-            msg += " | Plain XML workflow ✅ | Junctions rebuilt ✅"
+            msg += f" | Junctions recomputed: {len(touched_nodes)} (others unchanged)"
             
             return {
                 "status": "success",
@@ -545,6 +602,11 @@ class NetworkEditor:
                     for lane in lanes:
                         lane.set("speed", str(new_speed_ms))
                     modified_edges += 1
+            
+            if modified_edges == 0:
+                if net_file_copy != Path(net_file):
+                    net_file_copy.unlink()
+                return {"status": "error", "message": f"No edges changed: none of {target_edge_ids} is in the network"}
             
             tree.write(net_file_copy, encoding="utf-8", xml_declaration=True)
             
