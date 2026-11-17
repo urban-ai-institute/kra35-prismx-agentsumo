@@ -175,10 +175,12 @@ class PromptBuilder:
 
         db_text = "None"
         if db and db != "None" and sqlite_enabled:
+            # Skip malformed entries (e.g. a missing or None simulation_id)
             sims_list = ", ".join(
-                s.get("simulation_id", "")
-                for s in simulations
-            ) if simulations else "None"
+                str(s["simulation_id"])
+                for s in (simulations or [])
+                if isinstance(s, dict) and s.get("simulation_id")
+            ) or "None"
             db_text = f"""
     <path>{db}</path>
     <simulations>{sims_list}</simulations>"""

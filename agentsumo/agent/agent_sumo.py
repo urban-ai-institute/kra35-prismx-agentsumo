@@ -18,6 +18,9 @@ from agentsumo.agent.prompts import PromptBuilder
 
 logger = logging.getLogger("agentsumo.agent")
 
+# Tool result statuses that mean the tool did not produce its outputs
+_FAILED_STATUSES = ("error", "validation_error")
+
 
 class AgentSUMO:
     """
@@ -684,6 +687,11 @@ class AgentSUMO:
         Update state (including SQLite support).
         """
         try:
+            # The tool raised inside the MCP server
+            if getattr(result, "isError", False):
+                logger.debug(f"{tool_name}: MCP error result, state left unchanged")
+                return
+
             # Verify MCP response format
             if not result.content or len(result.content) == 0:
                 logger.warning(f"{tool_name}: result.content is empty")
@@ -721,6 +729,12 @@ class AgentSUMO:
                     logger.debug(f"   Original content. {content_str[:500]}")
                     return
 
+            # A failed tool produced nothing new. Updating from its result would
+            # overwrite good state with None/[] (and persist that to disk).
+            if not isinstance(result_dict, dict) or result_dict.get("status") in _FAILED_STATUSES:
+                logger.debug(f"{tool_name}: failed result, state left unchanged")
+                return
+
             if tool_name == "net_convert":
                 net_file = result_dict.get("net_file")
                 logger.debug(f"net_convert result. {result_dict}")
@@ -738,10 +752,14 @@ class AgentSUMO:
                     logger.info(f"Current network updated: {net_file}")
 
             elif tool_name == "trip_generate":
-                self.simulation_state["current_trips"] = result_dict.get("trip_file")
+                if result_dict.get("trip_file"):
+                    self.simulation_state["current_trips"] = result_dict["trip_file"]
 
-            elif tool_name == "route_generate":
-                self.simulation_state["current_routes"] = result_dict.get("route_file")
+            elif tool_name in ["route_generate", "flow_generation_tool",
+                               "vehicle_generation_tool", "vehicle_type_edit_tool"]:
+                # Each of these writes a new route file to use from now on
+                if result_dict.get("route_file"):
+                    self.simulation_state["current_routes"] = result_dict["route_file"]
 
             elif tool_name in ["reduce_lanes_tool", "edge_edit_tool", "speed_limit_edit_tool"]:
                 # Policy tools update current_network (but keep baseline unchanged)
@@ -750,15 +768,24 @@ class AgentSUMO:
                     self.simulation_state["current_network"] = modified_net
                     logger.info(f"Policy applied: current_network = {modified_net}")
                     logger.info(f"Baseline remains: {self.simulation_state.get('baseline_network')}")
+                # Deleted edges invalidate the old routes (the tool returns
+                # route_file None: "New route file needed")
+                if tool_name == "edge_edit_tool" and modified_net:
+                    self.simulation_state["current_routes"] = None
 
             elif tool_name == "sumo_runner":
-                self.simulation_state["last_results"] = result_dict.get("output_files")
+                if result_dict.get("output_files"):
+                    self.simulation_state["last_results"] = result_dict["output_files"]
 
             elif tool_name == "xml_to_sqlite_tool":
                 # When SQLite DB is created
                 db_file = result_dict.get("db_file")
                 simulation_id = result_dict.get("simulation_id")
-                metadata = result_dict.get("metadata", {})
+                metadata = result_dict.get("metadata") or {}
+
+                if not db_file or not simulation_id:
+                    logger.warning(f"xml_to_sqlite_tool: db_file or simulation_id missing. Full result. {result_dict}")
+                    return
 
                 self.simulation_state["current_db"] = db_file
 
@@ -830,6 +857,15 @@ class AgentSUMO:
                         logger.warning(f"State restore: {key}={path} no longer exists, discarding")
                         saved[key] = None
                         valid = False
+
+                # Drop simulation entries without an id. Older versions saved
+                # {"simulation_id": None} from failed xml_to_sqlite_tool runs,
+                # which broke the context on every chat() after a restart.
+                sims = saved.get("simulations")
+                saved["simulations"] = [
+                    s for s in (sims if isinstance(sims, list) else [])
+                    if isinstance(s, dict) and s.get("simulation_id")
+                ]
 
                 self.simulation_state.update(saved)
                 logger.info(f"State restored from {state_file.name}")
