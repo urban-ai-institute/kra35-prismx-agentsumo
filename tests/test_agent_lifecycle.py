@@ -148,3 +148,31 @@ def test_failing_client_does_not_block_the_others(world, tmp_path):
 
     assert sorted(world["closed"]) == ["filesystem", "sqlite", "sumo"]
     assert world["stack"] == []
+
+
+def test_sqlite_reconnects_when_current_db_changes(world, tmp_path):
+    gangnam = _make_db(tmp_path / "gangnam_analysis.db")
+    hongdae = _make_db(tmp_path / "hongdae_analysis.db", "1_baseline_hongdae")
+
+    async def run():
+        agent = _agent(tmp_path)
+        await agent.start(db_path=gangnam)
+        # xml_to_sqlite_tool wrote a new DB for another area
+        agent.simulation_state["current_db"] = hongdae
+        await agent._check_and_enable_sqlite_if_needed()
+        connected_to = agent.mcp_clients["sqlite"].db_path
+        tool_names = [t["name"] for t in agent.tools]
+        # Nothing to do while the DB stays the same
+        await agent._check_and_enable_sqlite_if_needed()
+        reopened = world["opened"].count("sqlite")
+        await agent.close()
+        return agent, connected_to, tool_names, reopened
+
+    agent, connected_to, tool_names, reopened = asyncio.run(run())
+
+    assert connected_to == hongdae
+    assert agent.simulation_state["sqlite_enabled"] is True
+    assert reopened == 2
+    assert tool_names.count("read_query") == 1
+    assert world["closed"] == ["sqlite", "sqlite", "filesystem", "sumo"]
+    assert world["stack"] == []

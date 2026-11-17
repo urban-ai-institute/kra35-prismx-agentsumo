@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional, Callable
 import asyncio
 import json
 import logging
+import os
 import re
 
 from agentsumo.client import SUMOMCPClient
@@ -21,6 +22,11 @@ logger = logging.getLogger("agentsumo.agent")
 
 # Tool result statuses that mean the tool did not produce its outputs
 _FAILED_STATUSES = ("error", "validation_error")
+
+
+def _same_path(a, b) -> bool:
+    """True if two file paths point to the same location."""
+    return os.path.realpath(str(a)) == os.path.realpath(str(b))
 
 
 class AgentSUMO:
@@ -162,9 +168,9 @@ class AgentSUMO:
 
         Tasks:
         1. Connect SUMO MCP Client (required)
-        2. Connect SQLite MCP Client (auto-enabled when db_path exists and file is present)
-        3. Load and integrate tools
-        4. Convert to Claude tools format
+        2. Connect Filesystem MCP Client (when enabled)
+        3. Connect SQLite MCP Client (auto-enabled when db_path exists and file is present)
+        4. Load, integrate and convert tools to Claude tools format
         """
         from pathlib import Path as PathlibPath
 
@@ -197,7 +203,27 @@ class AgentSUMO:
         else:
             logger.info("SUMO MCP disabled (SQLite-only mode)")
 
-        # 2. Connect SQLite MCP
+        # 2. Connect Filesystem MCP (only when enable_filesystem_mcp=True)
+        filesystem_tools = []
+
+        if self._enable_filesystem_mcp and self._filesystem_directories:
+            try:
+                from agentsumo.client.filesystem_mcp_client import FilesystemMCPClient
+
+                logger.info(f"Connecting to Filesystem MCP Server... (dirs. {self._filesystem_directories})")
+                await self._open_client("filesystem", FilesystemMCPClient(self._filesystem_directories))
+
+                filesystem_tools = await self.mcp_clients["filesystem"].list_tools()
+                logger.info(f"Filesystem MCP: {len(filesystem_tools)} tools")
+
+            except Exception as e:
+                logger.error(f"Filesystem MCP connection failed. {e}. Continuing.")
+        elif self._enable_filesystem_mcp:
+            logger.warning("Filesystem MCP enabled but filesystem_directories not specified.")
+
+        # 3. Connect SQLite MCP. Opened last so it is always the newest client:
+        # switching to another area's DB later closes and reopens it, which
+        # only works for the newest client (see _client_open_order).
         sqlite_tools = []
 
         if self._enable_sqlite_mcp is not False:
@@ -256,24 +282,6 @@ class AgentSUMO:
                 logger.warning(f"DB file does not exist. {db_path}")
         else:
             logger.info("SQLite MCP disabled")
-
-        # 3. Connect Filesystem MCP (only when enable_filesystem_mcp=True)
-        filesystem_tools = []
-
-        if self._enable_filesystem_mcp and self._filesystem_directories:
-            try:
-                from agentsumo.client.filesystem_mcp_client import FilesystemMCPClient
-
-                logger.info(f"Connecting to Filesystem MCP Server... (dirs. {self._filesystem_directories})")
-                await self._open_client("filesystem", FilesystemMCPClient(self._filesystem_directories))
-
-                filesystem_tools = await self.mcp_clients["filesystem"].list_tools()
-                logger.info(f"Filesystem MCP: {len(filesystem_tools)} tools")
-
-            except Exception as e:
-                logger.error(f"Filesystem MCP connection failed. {e}. Continuing.")
-        elif self._enable_filesystem_mcp:
-            logger.warning("Filesystem MCP enabled but filesystem_directories not specified.")
 
         # 4. Integrate tools
         all_mcp_tools = sumo_tools + sqlite_tools + filesystem_tools
@@ -1051,34 +1059,48 @@ class AgentSUMO:
 
     async def _check_and_enable_sqlite_if_needed(self):
         """
-        Activate SQLite MCP. Connect if DB exists and MCP is not connected.
+        Keep SQLite MCP connected to current_db.
+
+        Connects on first use, and reconnects when current_db has moved to
+        another file (xml_to_sqlite_tool writes one {tag}_analysis.db per
+        area), so read_query never runs against the previous area's DB.
         """
         current_db = self.simulation_state.get("current_db")
+        client = self.mcp_clients.get("sqlite")
 
-        # Already connected? Skip.
-        if self.mcp_clients.get("sqlite") and self.mcp_clients["sqlite"].is_connected:
-            self.simulation_state["sqlite_enabled"] = True
-            return
+        if client and client.is_connected:
+            # Already connected to the right DB? Skip.
+            if not current_db or _same_path(client.db_path, current_db):
+                self.simulation_state["sqlite_enabled"] = True
+                return
 
-        # DB exists and not yet activated -> first activation
+            # The tools keep their names, so only the connection is swapped
+            logger.info(f"Analysis DB changed. Reconnecting SQLite MCP... ({client.db_path} -> {current_db})")
+            self.simulation_state["sqlite_enabled"] = False
+            await self._close_client("sqlite")
+
+        # DB exists and not yet activated -> first activation (or reconnect)
         if current_db:
-            logger.info(f"First SQLite MCP activation in progress... (DB. {current_db})")
+            logger.info(f"SQLite MCP activation in progress... (DB. {current_db})")
 
             try:
                 from agentsumo.client.sqlite_mcp_client import SQLiteMCPClient
 
-                # Connect to new DB (first activation, not reconnect)
                 await self._open_client("sqlite", SQLiteMCPClient(current_db))
 
-                # Load and add tools
+                # Load and add tools (once: a reconnect reuses the same names)
                 sqlite_tools = await self.mcp_clients["sqlite"].list_tools()
-                new_claude_tools = self._convert_mcp_to_claude_tools(sqlite_tools)
+                known = {t["name"] for t in self.tools}
+                new_claude_tools = [
+                    t for t in self._convert_mcp_to_claude_tools(sqlite_tools)
+                    if t["name"] not in known
+                ]
                 self.tools.extend(new_claude_tools)
 
                 # Update state
                 self.simulation_state["sqlite_enabled"] = True
 
-                logger.info(f"SQLite MCP activation complete ({len(sqlite_tools)} tools added)")
+                logger.info(f"SQLite MCP activation complete ({len(new_claude_tools)} tools added)")
                 logger.info(f"   -> Detailed SQL queries are now available.")
 
             except Exception as e:
