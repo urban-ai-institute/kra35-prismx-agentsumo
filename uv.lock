@@ -36,7 +36,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agentsumo-mcp", specifier = ">=0.1.2" },
+    { name = "agentsumo-mcp", specifier = ">=0.1.3" },
     { name = "anthropic", specifier = ">=0.39.0" },
     { name = "certifi", specifier = ">=2025.8.3" },
     { name = "ddgs", specifier = ">=9.0.0" },
@@ -65,22 +65,24 @@ requires-dist = [
 
 [[package]]
 name = "agentsumo-mcp"
-version = "0.1.2"
+version = "0.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ddgs" },
     { name = "geopandas" },
     { name = "geopy" },
     { name = "lxml" },
+    { name = "matplotlib" },
     { name = "mcp", extra = ["cli"] },
     { name = "pandas" },
     { name = "pyproj" },
     { name = "shapely" },
     { name = "sumolib" },
+    { name = "traci" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d2/61/e3dffa6f4eaf120ae32fc80b7cd6767978754d2ed8ddb3f86221360db869/agentsumo_mcp-0.1.2.tar.gz", hash = "sha256:8e5df1f565d85f76678a19f7330cb49dd931fd1d43fe41ff620222f62d5f5cf7", size = 71551, upload-time = "2026-06-05T05:08:13.591Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/ea/ed4d6786e040bbfa02f494fc1e4ed4a8d6cc2e6853d6376e36f0874f91a4/agentsumo_mcp-0.1.3.tar.gz", hash = "sha256:197f76b4501d83327db86fd048174eafbe39b5173e5daef538fcf1c2f6f9936a", size = 82593, upload-time = "2026-11-17T10:09:01.033Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/24/78/794cc4244a762dff18d236c283b688a15cc9419d64026b2020838b1ffbd7/agentsumo_mcp-0.1.2-py3-none-any.whl", hash = "sha256:87a1780326c0994c7c3832766b22bd05b97b1160022caf7f67d8d8ec867616c2", size = 82207, upload-time = "2026-06-05T05:08:12.329Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/d4/12e684b35323a34b029c7f764a21fb97c54a9ddac618718431c3fe993f9f/agentsumo_mcp-0.1.3-py3-none-any.whl", hash = "sha256:b4ced7ca10af756bb5db3a8bbe899eaebc30790d93367b8b96ee8e97bc8b4e3e", size = 93520, upload-time = "2026-11-17T10:08:59.717Z" },
 ]
 
 [[package]]
