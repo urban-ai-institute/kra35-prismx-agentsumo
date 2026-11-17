@@ -1017,7 +1017,7 @@ def simulation_report_tool(
             r = conn.execute("""
                 SELECT COUNT(*) as trips, AVG(duration) as dur, AVG(waitingTime) as wait,
                        AVG(timeLoss) as tl, AVG(routeLength) as rlen,
-                       SUM(CO2_abs)/1e6 as co2_kg, SUM(fuel_abs)/1e6 as fuel_L,
+                       SUM(CO2_abs)/1e6 as co2_kg, SUM(fuel_abs)/1e6 as fuel_kg,
                        SUM(NOx_abs)/1e3 as nox_g, SUM(PMx_abs)/1e3 as pm_g
                 FROM trips WHERE simulation_id=?
             """, (sid,)).fetchone()
@@ -1043,7 +1043,8 @@ def simulation_report_tool(
                 "avg_timeloss": r['tl'],
                 "avg_speed_kmh": round((spd['s'] or 0) * 3.6, 1),
                 "co2_kg": round(r['co2_kg'] or 0, 1),
-                "fuel_L": round(r['fuel_L'] or 0, 2),
+                # SUMO >= 1.14 writes fuel_abs in mg (mass, not volume)
+                "fuel_kg": round(r['fuel_kg'] or 0, 2),
                 "nox_g": round(r['nox_g'] or 0, 1),
                 "pm_g": round(r['pm_g'] or 0, 2),
                 "duration_dist": dist
@@ -1120,7 +1121,7 @@ def simulation_report_tool(
             ("Avg Time Loss", "avg_timeloss", True, fmt_time),
             ("Avg Speed", "avg_speed_kmh", False, lambda v: f"{v:.1f} km/h"),
             ("Total CO₂", "co2_kg", True, lambda v: f"{v:,.1f} kg"),
-            ("Total Fuel", "fuel_L", True, lambda v: f"{v:,.2f} L"),
+            ("Total Fuel", "fuel_kg", True, lambda v: f"{v:,.2f} kg"),
             ("Total NOx", "nox_g", True, lambda v: f"{v:,.1f} g"),
             ("Completed Trips", "trips", False, lambda v: f"{v:,}"),
         ]
@@ -1184,7 +1185,7 @@ def simulation_report_tool(
 
         # Emission comparison
         emission_rows = ""
-        emission_metrics = [("CO₂", "co2_kg", "kg"), ("Fuel", "fuel_L", "L"), ("NOx", "nox_g", "g"), ("PM", "pm_g", "g")]
+        emission_metrics = [("CO₂", "co2_kg", "kg"), ("Fuel", "fuel_kg", "kg"), ("NOx", "nox_g", "g"), ("PM", "pm_g", "g")]
         for label, key, unit in emission_metrics:
             row = f"<tr><td style='color:#8aa69c;'>{label}</td>"
             for s in scenarios:

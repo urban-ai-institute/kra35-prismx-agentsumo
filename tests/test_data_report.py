@@ -1,6 +1,7 @@
 """
 Tests for simulation_report_tool (no SUMO binary needed):
-1. An unreadable net_file does not crash the report (module logger exists)
+1. Fuel is reported in kg (SUMO writes fuel_abs in mg), not mislabelled "L"
+2. An unreadable net_file does not crash the report (module logger exists)
 """
 
 import re
@@ -34,6 +35,19 @@ def _report(tmp_path, db):
 def _cells(html, label):
     row = re.search(rf"<td[^>]*>{re.escape(label)}</td>(.*?)</tr>", html, re.S).group(1)
     return re.findall(r"<td[^>]*>([^<]*)</td>", row)
+
+
+def test_fuel_is_reported_in_kg(tmp_path):
+    f = _write_inputs(tmp_path)
+    db = tmp_path / "a.db"
+    _import(f, db, simulation_id="1_baseline", description="Baseline")
+
+    result = _report(tmp_path, db)
+    assert result["status"] == "success", result
+    html = Path(result["report_file"]).read_text(encoding="utf-8")
+    # 2 trips x 10000 mg fuel = 0.02 kg
+    assert _cells(html, "Total Fuel") == ["0.02 kg"]
+    assert " L<" not in html
 
 
 def test_unreadable_net_file_does_not_crash(tmp_path):
