@@ -50,7 +50,7 @@ class AgentSUMO:
     def __init__(
         self,
         model: str = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 16000,
         enable_logging: bool = True,
         enable_debug: bool = False,
         interface: str = "cli",
@@ -65,7 +65,9 @@ class AgentSUMO:
         """
         Args:
             model: Claude model (default. config.DEFAULT_MODEL)
-            max_tokens: Maximum response tokens
+            max_tokens: Maximum response tokens, extended thinking included (up to
+                        10000 of them go to thinking). Requests are not streamed, so
+                        the SDK refuses values above ~21000 (8192 for Claude Opus 4/4.1).
             enable_logging: Enable logging
             enable_debug: Debug mode (show raw response)
             interface: Runtime environment ("cli" or "web")
@@ -433,12 +435,7 @@ class AgentSUMO:
             return result
 
         # 4. Plain text response (handle all content blocks)
-        assistant_text = self._extract_text_from_response(response)
-
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": response.content
-        })
+        assistant_text = self._record_final_response(response)
 
         total_time = time.time() - start_time
         logger.info(f"AgentSUMO: {assistant_text[:100]}...")
@@ -653,16 +650,47 @@ class AgentSUMO:
             return await self._handle_tool_use(final_response, _depth=_depth + 1)
 
         # Final text response (handles all content blocks, including thinking)
-        final_text = self._extract_text_from_response(final_response)
-
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": final_response.content
-        })
+        final_text = self._record_final_response(final_response)
 
         logger.info(f"AgentSUMO: {final_text[:100]}...")
 
         return final_text
+
+    def _record_final_response(self, response) -> str:
+        """
+        Append a final (non tool_use) response to history and return its text.
+
+        A response cut off at max_tokens can end in a half-written tool_use
+        block. It is never executed, so it must not be stored: a tool_use
+        without a matching tool_result makes every later API call fail until
+        the conversation is reset. The user is told the reply was cut off.
+        """
+        content = response.content
+        text = self._extract_text_from_response(response)
+
+        if response.stop_reason == "max_tokens":
+            dropped_tool = any(getattr(b, "type", None) == "tool_use" for b in content)
+            notice = f"[Reply cut off: the response reached the {self.max_tokens}-token limit before it finished."
+            if dropped_tool:
+                notice += " The tool call it was starting was not run."
+            notice += " Ask me to continue, or narrow the request.]"
+            logger.warning(f"Response hit max_tokens ({self.max_tokens}). Dropped tool_use: {dropped_tool}")
+
+            # Keep the history valid: no tool_use, no empty text block
+            content = [
+                b for b in content
+                if getattr(b, "type", None) != "tool_use"
+                and not (getattr(b, "type", None) == "text" and not b.text.strip())
+            ]
+            content.append({"type": "text", "text": notice})
+            text = f"{text}\n\n{notice}" if text else notice
+
+        self.conversation_history.append({
+            "role": "assistant",
+            "content": content
+        })
+
+        return text
 
     async def _route_tool_call(self, tool_name: str, tool_input: dict):
         """
