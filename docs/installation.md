@@ -13,7 +13,10 @@ management.
 | SUMO | 1.24+ | Eclipse SUMO simulator. |
 | `uv` | 0.4+ | Used to create the virtual environment and resolve dependencies. |
 | Anthropic API key | — | Claude Sonnet 4.5 or newer recommended. |
-| Mapbox token | — | For satellite/streets tiles in the web UI. |
+| Mapbox token | — | For satellite/streets tiles in the web UI (not needed for the CLI). |
+| Node.js | 18+ | `npx` runs the Filesystem MCP Server (`@modelcontextprotocol/server-filesystem`). Without it the agent starts, but the rerouter / VSS / vType workflows are unavailable. |
+| Internet access | — | OSM data (Overpass API), geocoding (Nominatim), web search (DuckDuckGo). |
+| `osmium-tool` | optional | Fallback when Overpass fails: the area is cut from a Geofabrik `.osm.pbf`. |
 
 ## 1. Install SUMO
 
@@ -21,7 +24,10 @@ management.
 
 :::{tab-item} macOS
 
+SUMO is not in Homebrew's core formulae; install it from SUMO's tap:
+
 ```bash
+brew tap dlr-ts/sumo
 brew install sumo
 ```
 
@@ -76,8 +82,8 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ## 3. Clone and install AgentSUMO
 
 ```bash
-git clone https://github.com/mw-jeong/AgentSUMO.git
-cd AgentSUMO
+git clone https://github.com/urban-ai-institute/kra35-prismx-agentsumo.git
+cd kra35-prismx-agentsumo
 
 # Create a Python 3.12 virtual environment
 uv venv --python 3.12
@@ -92,7 +98,7 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
-`uv pip install -e .` reads [pyproject.toml](https://github.com/mw-jeong/AgentSUMO/blob/main/pyproject.toml)
+`uv pip install -e .` reads [pyproject.toml](https://github.com/urban-ai-institute/kra35-prismx-agentsumo/blob/main/pyproject.toml)
 and pulls in every runtime dependency (Anthropic SDK, MCP, SUMO Python
 tools, FastAPI, Mapbox-compatible geo libraries, and more).
 
@@ -126,8 +132,10 @@ SUMO executables.
 :::{tab-item} macOS (Homebrew)
 
 ```text
-/opt/homebrew/share/sumo
+/opt/homebrew/opt/sumo/share/sumo
 ```
+
+That is `$(brew --prefix sumo)/share/sumo`.
 
 :::
 
@@ -169,8 +177,8 @@ After the virtual environment is active and `.env` is in place:
 
 ```bash
 python -c "import agentsumo; print('agentsumo installed')"
-sumo --version
-python web.py
+python chat.py   # prints "Tools available: 40" with Node.js (26 without); type quit
+python web.py    # needs MAPBOX_TOKEN; http://localhost:8000
 ```
 
 The web server should start on `http://localhost:8000`. A missing or invalid

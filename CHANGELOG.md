@@ -9,6 +9,28 @@ currently at framework version 0.1.0.
 
 ## [Unreleased]
 
+### Fixed
+- The web interface answered every page with a 500 on a fresh install:
+  Starlette 1.0 removed the `TemplateResponse(name, context)` form that
+  `web/app.py` uses. `starlette` is pinned below 1.0.
+- `clean.py` targeted `agentsumo/output`, which does not exist, and
+  deleted nothing. It now cleans the output folder the MCP server writes
+  to (also `additional/` and the saved agent state), keeping `uploads/`,
+  `vehicle_types.add.xml` and the tracked `.gitkeep` files.
+
+### Changed
+- README and installation guide: SUMO via Homebrew needs `brew tap
+  dlr-ts/sumo` (it is not in Homebrew core) and `SUMO_HOME` is
+  `$(brew --prefix sumo)/share/sumo`; the clone URL and directory follow
+  the repository's move to `urban-ai-institute/kra35-prismx-agentsumo`;
+  added internet access and optional `osmium-tool` to the requirements,
+  a Claude Desktop configuration for the standalone server, what the CLI
+  prints on start, troubleshooting for Node.js and Overpass, and how to
+  run the tests.
+- Repository URLs in CITATION.cff, the docs and the `agentsumo-mcp`
+  package metadata point at the new repository. The MCP Registry name
+  `io.github.mw-jeong/agentsumo-mcp` is unchanged.
+
 ## [0.1.3] — 2026-11-17
 
 ### Added
