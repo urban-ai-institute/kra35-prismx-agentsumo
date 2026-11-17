@@ -1041,7 +1041,8 @@ def simulation_report_tool(
                 "avg_duration": r['dur'],
                 "avg_wait": r['wait'],
                 "avg_timeloss": r['tl'],
-                "avg_speed_kmh": round((spd['s'] or 0) * 3.6, 1),
+                # None (shown as "—") when no vehicle drove, e.g. 0 completed trips
+                "avg_speed_kmh": round(spd['s'] * 3.6, 1) if spd['s'] is not None else None,
                 "co2_kg": round(r['co2_kg'] or 0, 1),
                 # SUMO >= 1.14 writes fuel_abs in mg (mass, not volume)
                 "fuel_kg": round(r['fuel_kg'] or 0, 2),
@@ -1103,7 +1104,8 @@ def simulation_report_tool(
             return f"{s/60:.1f} min"
 
         def diff_pct(a, b):
-            if not a or a == 0: return "—"
+            # a scenario with 0 completed trips has no averages (None)
+            if a is None or b is None or a == 0: return "—"
             pct = (b - a) / abs(a) * 100
             sign = "+" if pct > 0 else ""
             return f"{sign}{pct:.0f}%"
@@ -1119,7 +1121,7 @@ def simulation_report_tool(
             ("Avg Trip Duration", "avg_duration", True, fmt_time),
             ("Avg Waiting Time", "avg_wait", True, fmt_time),
             ("Avg Time Loss", "avg_timeloss", True, fmt_time),
-            ("Avg Speed", "avg_speed_kmh", False, lambda v: f"{v:.1f} km/h"),
+            ("Avg Speed", "avg_speed_kmh", False, lambda v: "—" if v is None else f"{v:.1f} km/h"),
             ("Total CO₂", "co2_kg", True, lambda v: f"{v:,.1f} kg"),
             ("Total Fuel", "fuel_kg", True, lambda v: f"{v:,.2f} kg"),
             ("Total NOx", "nox_g", True, lambda v: f"{v:,.1f} g"),
