@@ -5,10 +5,12 @@ Uses TraCI for simulation execution with replay frame capture.
 """
 
 import os
+import sys
 import json
 import time
 import datetime
 import logging
+import contextlib
 import subprocess
 import threading
 from pathlib import Path
@@ -117,11 +119,13 @@ class SimulationRunner:
                 output_files, duration, timestamp
             )
 
-            # Run simulation via TraCI
-            result = self._run_simulation_traci(
-                config_file, output_path, output_files, duration, prefix, timestamp,
-                enable_rerouting=has_rerouter
-            )
+            # Run simulation via TraCI. traci print()s its connection retries,
+            # and stdout is this MCP server's JSON-RPC channel.
+            with contextlib.redirect_stdout(sys.stderr):
+                result = self._run_simulation_traci(
+                    config_file, output_path, output_files, duration, prefix, timestamp,
+                    enable_rerouting=has_rerouter
+                )
 
             # Prepare result
             return self._prepare_result(

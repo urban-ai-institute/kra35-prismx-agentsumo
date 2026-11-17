@@ -2,9 +2,12 @@
 Tests for sumo_runner (SimulationRunner):
 1. sumocfg generation for route- and trip-only input
 2. Result shape: failures are errors and only existing output files are returned
-3. Real SUMO runs (skipped without SUMO): broken input fails fast with SUMO's message
+3. Real SUMO runs (skipped without SUMO): broken input fails fast with SUMO's
+   message, and nothing reaches stdout (the MCP server's JSON-RPC channel)
 """
 
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -14,7 +17,8 @@ import xml.etree.ElementTree as ET
 import pytest
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from agentsumo_mcp.baseline.simulation_runner import SimulationRunner
 from agentsumo_mcp.settings.settings import sumo_environment
@@ -150,3 +154,33 @@ def test_successful_run_returns_existing_outputs(tmp_path, grid_net):
     assert all(Path(p).exists() for p in result["output_files"])
     assert Path(result["summary_xml"]).exists()
     assert len(ET.parse(result["output_files"][0]).getroot().findall("tripinfo")) == 2
+
+
+RUN_IN_SUBPROCESS = """
+import json, sys
+from agentsumo_mcp.baseline.simulation_runner import SimulationRunner
+result = SimulationRunner().run(**json.loads(sys.argv[1]))
+sys.stderr.write("RESULT " + json.dumps(result) + "\\n")
+"""
+
+
+@needs_sumo
+@pytest.mark.parametrize("routes, status", [(GOOD_ROUTES, "success"), (BROKEN_ROUTES, "error")])
+def test_nothing_is_written_to_stdout(tmp_path, grid_net, routes, status):
+    args = {
+        "net_file": str(grid_net),
+        "route_file": _route_file(tmp_path, "in.rou.xml", routes),
+        "duration": 60,
+        "output_dir": str(tmp_path / "sim"),
+    }
+    env = dict(os.environ, PYTHONPATH=str(PROJECT_ROOT))
+
+    proc = subprocess.run(
+        [sys.executable, "-c", RUN_IN_SUBPROCESS, json.dumps(args)],
+        capture_output=True, text=True, env=env, cwd=tmp_path, timeout=120,
+    )
+
+    result_line = [line for line in proc.stderr.splitlines() if line.startswith("RESULT ")]
+    assert result_line, proc.stderr
+    assert json.loads(result_line[-1][len("RESULT "):])["status"] == status
+    assert proc.stdout == ""
