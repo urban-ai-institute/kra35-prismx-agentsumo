@@ -1,7 +1,8 @@
 """
 Tests for sumo_runner (SimulationRunner):
 1. sumocfg generation for route- and trip-only input
-2. Result shape: failures are errors and only existing output files are returned
+2. Result shape: failures are errors, only existing output files are returned,
+   and replay_file is at the top level (and still in metadata)
 3. Real SUMO runs (skipped without SUMO): broken input fails fast with SUMO's
    message, and nothing reaches stdout (the MCP server's JSON-RPC channel)
 """
@@ -85,6 +86,7 @@ def test_failed_run_is_an_error_without_output_paths(tmp_path):
     assert result["status"] == "error"
     assert result["output_files"] == []
     assert result["summary_xml"] is None
+    assert result["replay_file"] is None
     assert stderr in result["message"]
     assert result["sumo_log"] == str(tmp_path / "net_sumo_ts.log")
 
@@ -100,6 +102,17 @@ def test_successful_run_returns_only_existing_files(tmp_path):
     assert result["output_files"] == [str(tmp_path / OUTPUT_FILES["tripinfo"])]
     assert result["summary_xml"] is None
     assert result["metadata"]["absolute_summary"] is None
+
+
+def test_replay_file_is_returned_at_top_level(tmp_path):
+    (tmp_path / "net_replay_ts.json").write_text("{}")
+
+    result = SimulationRunner()._prepare_result(
+        _Result(0, replay_file="net_replay_ts.json"), tmp_path, OUTPUT_FILES, tmp_path, 600,
+    )
+
+    assert result["replay_file"] == str(tmp_path / "net_replay_ts.json")
+    assert result["metadata"]["replay_file"] == "net_replay_ts.json"
 
 
 # ---------------------------------------------------------------- real SUMO
@@ -153,6 +166,7 @@ def test_successful_run_returns_existing_outputs(tmp_path, grid_net):
     assert len(result["output_files"]) == 3
     assert all(Path(p).exists() for p in result["output_files"])
     assert Path(result["summary_xml"]).exists()
+    assert Path(result["replay_file"]).exists()
     assert len(ET.parse(result["output_files"][0]).getroot().findall("tripinfo")) == 2
 
 

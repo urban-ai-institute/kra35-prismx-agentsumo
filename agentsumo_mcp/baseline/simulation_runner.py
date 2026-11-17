@@ -651,6 +651,7 @@ class SimulationRunner:
         summary_abs = str(output_path / output_files["summary"])
 
         replay_file = getattr(result, 'replay_file', None)
+        replay_abs = str(output_path / replay_file) if replay_file else None
         sumo_log = getattr(result, 'sumo_log', None)
 
         if result.returncode != 0:
@@ -661,6 +662,7 @@ class SimulationRunner:
                 "status": "error",
                 "output_files": [],
                 "summary_xml": None,
+                "replay_file": None,
                 "sumo_log": sumo_log,
                 "message": (
                     f"Simulation failed after {result.elapsed:.2f} seconds:\n{result.stderr}\n"
@@ -686,6 +688,7 @@ class SimulationRunner:
                 p for p in (tripinfo_abs, edgedata_abs, edgedata_emission_abs) if existing(p)
             ],
             "summary_xml": existing(summary_abs),
+            "replay_file": existing(replay_abs) if replay_abs else None,
             "sumo_log": sumo_log,
             "message": f"Simulation executed successfully in {result.elapsed:.2f} seconds.",
             "simulation_time": result.elapsed,
