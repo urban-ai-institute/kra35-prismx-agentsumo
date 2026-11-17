@@ -4,6 +4,7 @@ Vehicle management tools for SUMO MCP Server.
 
 import xml.etree.ElementTree as ET
 import datetime
+import math
 import random
 import shutil
 from pathlib import Path
@@ -23,6 +24,68 @@ from agentsumo_mcp.utils.sumo_utils import (
 )
 
 logger = logging.getLogger("agentsumo_mcp.vehicle_manager")
+
+# Route-file elements SUMO inserts in file order, and the attribute that
+# holds their departure time
+_DEPART_ATTRIBUTE = {
+    "vehicle": "depart",
+    "trip": "depart",
+    "person": "depart",
+    "container": "depart",
+    "flow": "begin",
+    "personFlow": "begin",
+    "containerFlow": "begin",
+    "interval": "begin",
+}
+
+
+def _parse_time(value: Optional[str]) -> Optional[float]:
+    """Seconds for a SUMO time value ("12.5" or "[d:]h:m:s"); None if it is not a time."""
+    if value is None:
+        return None
+    parts = value.strip().split(":")
+    if len(parts) > 4:
+        return None
+    try:
+        seconds = sum(float(p) * f for p, f in zip(reversed(parts), (1, 60, 3600, 86400)))
+    except ValueError:
+        return None
+    return seconds if math.isfinite(seconds) else None
+
+
+def sort_by_departure(root: ET.Element) -> None:
+    """
+    Reorder a route file's elements so SUMO loads all of them.
+
+    SUMO reads route files incrementally and drops anything departing before
+    an element it has already read ("Route file should be sorted by departure
+    time, ignoring ..."), so vehicles or flows appended at the end of a file
+    must be moved to their departure time. Vehicles/trips/persons are sorted
+    by depart and flows by begin (stable, so equal times keep their order),
+    after all definitions (vType, route, ...), which keep their order too.
+    An element whose departure is not a time ("triggered", "now", "begin",
+    ...) is not checked by SUMO; it stays right after the element before it.
+    """
+    definitions = []
+    departing = []
+    last_time = float("-inf")
+    for index, child in enumerate(root):
+        attribute = _DEPART_ATTRIBUTE.get(child.tag)
+        if attribute is None:
+            definitions.append(child)
+            continue
+        value = child.get(attribute)
+        if value is None and attribute == "begin":
+            value = "0"  # a flow's begin defaults to the simulation begin
+        depart = _parse_time(value)
+        if depart is not None:
+            last_time = depart
+        departing.append((last_time, index, child))
+
+    departing.sort(key=lambda item: (item[0], item[1]))
+    root[:] = definitions + [child for _, _, child in departing]
+    # Moved and newly added elements carry no indentation of their own
+    ET.indent(root, space="    ")
 
 
 class VehicleManager:
@@ -195,6 +258,7 @@ class VehicleManager:
                 })
                 ET.SubElement(vehicle, "route", {"edges": route_string})
 
+            sort_by_departure(root)
             tree.write(route_file_copy, encoding="utf-8", xml_declaration=True)
 
             mode_msg = "location-based (geocoding)" if use_geocoding else "road-name-based"
@@ -441,6 +505,7 @@ class VehicleManager:
                 flow_attrs["vehsPerHour"] = str(vehs_per_hour)
 
             ET.SubElement(root, "flow", flow_attrs)
+            sort_by_departure(root)
             tree.write(route_file_copy, encoding="utf-8", xml_declaration=True)
 
             msg = f"Flow '{flow_id}' generated: {coord_desc} ({begin}-{end}s, {count_desc})"
