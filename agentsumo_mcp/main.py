@@ -951,9 +951,24 @@ def simulation_report_tool(
     import sumolib
     from agentsumo_mcp.utils.path_utils import get_output_path
 
+    # sqlite3.connect() would create an empty file for a wrong path, which
+    # then breaks later imports into it; report the path instead.
+    if not db_path or not Path(db_path).is_file():
+        return {"status": "error", "message": f"Database not found: {db_path}"}
+
     try:
         conn = sqlite3_mod.connect(db_path)
         conn.row_factory = sqlite3_mod.Row
+
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='simulations'"
+        ).fetchone():
+            conn.close()
+            return {
+                "status": "error",
+                "message": f"Not an analysis database (no simulations table): {db_path}. "
+                           "Run xml_to_sqlite_tool first and pass the db_file it returns."
+            }
 
         # Get all scenarios (skip auto-generated ones)
         sims = conn.execute(

@@ -3,6 +3,7 @@ Tests for simulation_report_tool (no SUMO binary needed):
 1. Fuel is reported in kg (SUMO writes fuel_abs in mg), not mislabelled "L"
 2. A scenario with 0 completed trips does not crash the report
 3. An unreadable net_file does not crash the report (module logger exists)
+4. A wrong db_path returns an error and creates no file
 """
 
 import re
@@ -71,3 +72,19 @@ def test_unreadable_net_file_does_not_crash(tmp_path):
 
     result = _report(tmp_path, db)
     assert result["status"] == "success", result
+
+
+def test_wrong_db_path_is_an_error_and_creates_no_file(tmp_path):
+    missing = tmp_path / "typo_analysis.db"
+    result = _report(tmp_path, missing)
+    assert result["status"] == "error"
+    assert "not found" in result["message"]
+    assert not missing.exists()
+
+
+def test_empty_db_file_is_an_error(tmp_path):
+    empty = tmp_path / "empty.db"
+    empty.write_bytes(b"")
+    result = _report(tmp_path, empty)
+    assert result["status"] == "error"
+    assert "no simulations table" in result["message"]
