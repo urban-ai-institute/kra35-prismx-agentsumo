@@ -17,6 +17,9 @@ import sys
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
+# Add project root to path
+sys.path.insert(0, str(PROJECT_ROOT))
+
 
 def test_env_file_parsing_and_shell_precedence(tmp_path):
     # chat.py reads the .env next to itself, so run a copy from tmp_path

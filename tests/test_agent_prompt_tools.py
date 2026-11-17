@@ -9,9 +9,13 @@ import ast
 import importlib.util
 from pathlib import Path
 import re
+import sys
 
 PROJECT_ROOT = Path(__file__).parent.parent
 AGENT_DIR = PROJECT_ROOT / "agentsumo" / "agent"
+
+# Add project root to path
+sys.path.insert(0, str(PROJECT_ROOT))
 
 SQLITE_TOOLS = {"read_query", "write_query", "create_table", "list_tables", "describe_table", "append_insight"}
 
