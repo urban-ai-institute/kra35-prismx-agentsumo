@@ -37,6 +37,8 @@ dependencies = [
     "shapely>=2.1.1",
     "pyproj>=3.6.0",
     "lxml>=5.0.0",
+    # SUMO's plot scripts run with the server's interpreter (visualize_* tools)
+    "matplotlib>=3.7",
     "ddgs>=9.0.0",
 ]
 

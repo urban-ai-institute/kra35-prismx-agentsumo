@@ -125,6 +125,8 @@ currently at framework version 0.1.0.
 - RandomOD checks randomTrips' exit code instead of returning a stale
   trips file as success; zone OD matches numeric zone ids; netconvert,
   duarouter, polyconvert and od2trips failures include their stderr.
+- `agentsumo-mcp` declares `matplotlib`, which the visualization tools
+  need; a standalone install had none, so every plot failed.
 - The framework package no longer bundles a second copy of
   `agentsumo_mcp`, and ships its prompt template and guides, so a
   non-editable install works.
