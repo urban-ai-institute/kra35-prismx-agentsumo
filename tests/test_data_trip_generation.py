@@ -1,6 +1,8 @@
 """
 Tests for trip/route/net generation error handling:
 1. Failed SUMO tools report their stderr, not only "non-zero exit status 1"
+2. RandomOD checks randomTrips' exit code, never returns a stale or partial
+   file, and writes one file per traffic_condition
 Fake tools stand in for SUMO; tests that need real SUMO binaries are skipped
 when SUMO_HOME/bin/sumo is missing.
 """
@@ -114,3 +116,82 @@ def test_netconvert_real_error_includes_stderr(tmp_path):
     result = NetConverter().convert(str(osm), city_en="broken", output_dir=str(tmp_path / "out"))
     assert result["status"] == "error"
     assert "Error:" in result["message"]
+
+
+# ------------------------------------------------------------
+# 2. RandomOD
+# ------------------------------------------------------------
+
+def _fake_random_trips(tmp_path, write_trips, code):
+    """Stand-in for randomTrips.py: optionally writes trips to -o, exits with `code`."""
+    script = tmp_path / f"randomTrips_{int(write_trips)}_{code}.py"
+    script.write_text(
+        "import sys\n"
+        "out = sys.argv[sys.argv.index('-o') + 1]\n"
+        f"if {write_trips!r}:\n"
+        "    open(out, 'w').write('<routes><trip id=\"0\" depart=\"0\" from=\"e1\" to=\"e2\"/></routes>')\n"
+        f"sys.stderr.write('Error: duarouter failed during --validate\\n' if {code} else '')\n"
+        f"sys.exit({code})\n"
+    )
+    return str(script)
+
+
+def _random_od(tmp_path, script, condition="heavy"):
+    tg = TripGenerator()
+    tg.environment = FakeEnv(tools={"randomTrips.py": script})
+    net = tmp_path / "x.net.xml"
+    net.write_text(NET_XML)
+    return tg.generate("RandomOD", str(net), traffic_condition=condition,
+                       output_dir=str(tmp_path / "trips"))
+
+
+def test_random_od_failure_does_not_return_previous_file(tmp_path):
+    ok = _random_od(tmp_path, _fake_random_trips(tmp_path, write_trips=True, code=0))
+    assert ok["status"] == "success"
+    assert ok["trip_file"].endswith("x.net_heavy.trips.xml")
+
+    failed = _random_od(tmp_path, _fake_random_trips(tmp_path, write_trips=False, code=1))
+    assert failed["status"] == "error"
+    assert "randomTrips.py failed (exit code 1)" in failed["message"]
+    assert "duarouter failed during --validate" in failed["message"]
+    assert not Path(ok["trip_file"]).exists()
+
+
+def test_random_od_failure_removes_partial_output(tmp_path):
+    # randomTrips writes the unvalidated trips before --validate can fail
+    failed = _random_od(tmp_path, _fake_random_trips(tmp_path, write_trips=True, code=1))
+    assert failed["status"] == "error"
+    assert list((tmp_path / "trips").glob("*.trips.xml")) == []
+
+
+def test_random_od_writes_one_file_per_traffic_condition(tmp_path):
+    script = _fake_random_trips(tmp_path, write_trips=True, code=0)
+    medium = _random_od(tmp_path, script, "medium")
+    heavy = _random_od(tmp_path, script, "heavy")
+    assert medium["status"] == heavy["status"] == "success"
+    assert Path(medium["trip_file"]).name == "x.net_medium.trips.xml"
+    assert Path(heavy["trip_file"]).name == "x.net_heavy.trips.xml"
+    assert Path(medium["trip_file"]).exists() and Path(heavy["trip_file"]).exists()
+
+
+@needs_sumo
+def test_random_od_real_sumo_keeps_both_demand_levels(tmp_path):
+    net = tmp_path / "grid.net.xml"
+    subprocess.run([SUMOEnvironment.get_binary_path("netgenerate"), "--grid", "--grid.number", "3",
+                    "-o", str(net)], check=True, capture_output=True)
+    tg = TripGenerator()
+    rg = RouteGenerator()
+    results = {}
+    for level in ("light", "heavy"):
+        r = tg.generate("RandomOD", str(net), traffic_condition=level, output_dir=str(tmp_path / "trips"))
+        assert r["status"] == "success", r
+        route = rg.generate(str(net), r["trip_file"], output_dir=str(tmp_path / "trips"))
+        assert route["status"] == "success", route
+        results[level] = (r, route)
+
+    (light, light_route), (heavy, heavy_route) = results["light"], results["heavy"]
+    assert light["trip_file"] != heavy["trip_file"]
+    assert light_route["route_file"] != heavy_route["route_file"]
+    assert 0 < light["trip_count"] < heavy["trip_count"]
+    # the light file is still the light demand after generating heavy
+    assert len(ET.parse(light["trip_file"]).getroot().findall("trip")) == light["trip_count"]

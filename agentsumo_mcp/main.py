@@ -196,7 +196,9 @@ def trip_generate(
     Example: {"O_lon": "pickup_lng", "O_lat": "pickup_lat", "D_lon": "dropoff_lng", "D_lat": "dropoff_lat", "O_time_relative": "start_sec"}
 
     === RETURNS ===
-    - trip_file: Path to generated .trips.xml file (pass to route_generate)
+    - trip_file: Path to generated .trips.xml file (pass to route_generate).
+      RandomOD writes one file per traffic_condition (<net>_<condition>.trips.xml),
+      so several demand levels can coexist; always pass the returned path on.
     - trip_count: Number of trips generated
     """
     if trip_type == "RandomOD" and traffic_condition is None:

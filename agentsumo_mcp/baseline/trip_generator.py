@@ -5,6 +5,7 @@ Generates trip demand (trips.xml) from OD data.
 Route assignment (duarouter) is handled separately by RouteGenerator.
 """
 
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -102,6 +103,11 @@ class TripGenerator:
             trip_count = 0
 
             if trip_type == "RandomOD":
+                # One file per demand level, so generating "light" and
+                # "heavy" before simulating either keeps both.
+                if traffic_condition:
+                    level = re.sub(r"[^A-Za-z0-9]+", "_", traffic_condition).strip("_")
+                    trip_file = str(output_path / f"{tag}_{level or 'custom'}.trips.xml")
                 trip_count = self._generate_random_od(
                     net_file, trip_file, traffic_condition
                 )
@@ -171,14 +177,20 @@ class TripGenerator:
             'type="passenger" departLane="free" departSpeed="random" departPos="random_free"'
         ]
 
+        # A file left from an earlier run must not pass as this run's output.
+        Path(trip_file).unlink(missing_ok=True)
+
         result = subprocess.run(randomTrips_cmd, capture_output=True, text=True, check=False)
 
         temp_route_path = Path(temp_route_file)
         if temp_route_path.exists():
             temp_route_path.unlink()
 
-        if not Path(trip_file).exists():
-            raise RuntimeError(f"Trip file was not created. Command output: {result.stderr}")
+        # randomTrips writes the unvalidated trips before --validate runs
+        # duarouter, so a failed run can still leave a trip file behind.
+        if result.returncode != 0 or not Path(trip_file).exists():
+            Path(trip_file).unlink(missing_ok=True)
+            raise RuntimeError(_tool_error("randomTrips.py", result))
 
         tree = ET.parse(trip_file)
         return len(tree.getroot().findall(".//trip"))
