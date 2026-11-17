@@ -5,6 +5,8 @@ This is the entry point for the modular SUMO MCP Server.
 All tools are registered here and imported from their respective modules.
 """
 
+import logging
+
 from mcp.server.fastmcp import FastMCP
 from typing import Dict, Any, List
 
@@ -24,6 +26,10 @@ from agentsumo_mcp.customization.traffic_lights import TrafficLightManager
 from agentsumo_mcp.visualization.network_plotter import NetworkPlotter
 from agentsumo_mcp.visualization.edge_plotter import EdgePlotter
 from agentsumo_mcp.visualization.data_plotter import DataPlotter
+
+# No handler of its own: records go to the root logger, which FastMCP
+# points at stderr (stdout is the MCP stdio channel).
+logger = logging.getLogger("agentsumo_mcp.main")
 
 # Initialize MCP server
 mcp = FastMCP("SUMO Baseline")
