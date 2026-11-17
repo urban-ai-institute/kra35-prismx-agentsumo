@@ -788,21 +788,25 @@ class AgentSUMO:
 
                 self.simulation_state["current_db"] = db_file
 
-                # Update simulation list
+                # Update simulation list. Each area has its own DB, so record
+                # which DB the simulation lives in; the context lists only
+                # those of current_db.
                 sim_info = {
                     "simulation_id": simulation_id,
-                    "trip_count": metadata.get("trip_count", 0)
+                    "trip_count": metadata.get("trip_count", 0),
+                    "db_file": db_file
                 }
 
-                # Remove duplicates then append
+                # Remove duplicates (same id in the same DB) then append
                 self.simulation_state["simulations"] = [
                     s for s in self.simulation_state.get("simulations", [])
-                    if s.get("simulation_id") != simulation_id
+                    if (s.get("simulation_id"), s.get("db_file")) != (simulation_id, db_file)
                 ]
                 self.simulation_state["simulations"].append(sim_info)
 
+                db_sims = [s for s in self.simulation_state["simulations"] if s.get("db_file") == db_file]
                 logger.info(f"State update. SQLite DB = {db_file}")
-                logger.info(f"   {len(self.simulation_state['simulations'])} simulations in current DB")
+                logger.info(f"   {len(db_sims)} simulations in current DB")
 
         except Exception as e:
             logger.debug(f"State update failed (ignored). {e}")

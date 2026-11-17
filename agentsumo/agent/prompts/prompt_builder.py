@@ -7,8 +7,14 @@ Dynamic prompt assembly based on Claude's official guidelines.
 from pathlib import Path
 from typing import Dict, Optional
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+
+
+def _same_path(a, b) -> bool:
+    """True if two file paths point to the same location."""
+    return os.path.realpath(str(a)) == os.path.realpath(str(b))
 
 
 class PromptBuilder:
@@ -175,11 +181,15 @@ class PromptBuilder:
 
         db_text = "None"
         if db and db != "None" and sqlite_enabled:
-            # Skip malformed entries (e.g. a missing or None simulation_id)
+            # List only simulations stored in the current DB (other areas
+            # have their own DB). Skip malformed entries, e.g. a missing or
+            # None simulation_id, and entries saved before simulations
+            # recorded their DB.
             sims_list = ", ".join(
                 str(s["simulation_id"])
                 for s in (simulations or [])
                 if isinstance(s, dict) and s.get("simulation_id")
+                and s.get("db_file") and _same_path(s["db_file"], db)
             ) or "None"
             db_text = f"""
     <path>{db}</path>

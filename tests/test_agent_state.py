@@ -155,3 +155,25 @@ def test_each_net_convert_becomes_the_baseline(agent):
     assert agent.simulation_state["current_network"] == "/o/networks/hongdae.net.xml"
     context = agent.prompt_builder.format_context(agent.simulation_state)
     assert "<baseline_network>/o/networks/hongdae.net.xml</baseline_network>" in context
+
+
+def test_context_lists_only_simulations_of_current_db(agent, tmp_path):
+    gangnam = str(tmp_path / "gangnam_analysis.db")
+    hongdae = str(tmp_path / "hongdae_analysis.db")
+    agent.simulation_state["simulations"].append({"simulation_id": "0_legacy", "trip_count": 1})  # saved before db_file existed
+
+    for db, sim_id in [(gangnam, "1_baseline"), (gangnam, "2_lane_reduction"), (hongdae, "1_baseline")]:
+        agent._update_state("xml_to_sqlite_tool", _result({
+            "status": "success", "db_file": db, "simulation_id": sim_id, "metadata": {"trip_count": 10},
+        }))
+    agent.simulation_state["sqlite_enabled"] = True
+
+    # Same id in two DBs is kept once per DB
+    assert len([s for s in agent.simulation_state["simulations"] if s["simulation_id"] == "1_baseline"]) == 2
+    assert agent.simulation_state["current_db"] == hongdae
+    context = agent.prompt_builder.format_context(agent.simulation_state)
+    assert "<simulations>1_baseline</simulations>" in context
+
+    agent.simulation_state["current_db"] = gangnam
+    context = agent.prompt_builder.format_context(agent.simulation_state)
+    assert "<simulations>1_baseline, 2_lane_reduction</simulations>" in context
