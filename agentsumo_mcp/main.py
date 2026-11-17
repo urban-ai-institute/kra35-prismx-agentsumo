@@ -1050,7 +1050,9 @@ def simulation_report_tool(
             net_for_names = sumolib.net.readNet(net_file)
             rows = conn.execute("""
                 SELECT edge_id, AVG(density) as d, AVG(speed) as s, AVG(waitingTime) as w
-                FROM edge_metrics WHERE simulation_id=? AND density > 0 GROUP BY edge_id
+                FROM edge_metrics WHERE simulation_id=? AND density > 0
+                  AND speed IS NOT NULL AND waitingTime IS NOT NULL
+                GROUP BY edge_id
             """, (base_sid,)).fetchall()
 
             road_data = {}

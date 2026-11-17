@@ -3,6 +3,7 @@ Tests for XMLToSQLiteConverter (no SUMO binary needed):
 1. An explicit simulation_id that exists is replaced in every table
 2. No simulation_id -> a new unique auto id; other simulations are never touched
 3. A 0-byte DB file gets the schema instead of failing with "no such table"
+4. edgedata attributes SUMO did not write are stored as NULL, not 0.0
 """
 
 import datetime as real_datetime
@@ -231,3 +232,31 @@ def test_older_db_missing_new_tables_is_migrated(tmp_path):
     counts = _counts(db)
     assert counts["edge_info"] == {"2_policy": 3}
     assert set(counts["trips"]) == {"1_baseline", "2_policy"}
+
+
+def test_unwritten_edgedata_attributes_are_null(tmp_path):
+    f = _write_inputs(tmp_path)
+    db = tmp_path / "a.db"
+    _import(f, db, simulation_id="1_baseline", description="d")
+
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    idle = con.execute("SELECT * FROM edge_metrics WHERE edge_id='e3'").fetchone()
+    for col in ("traveltime", "overlapTraveltime", "density", "occupancy", "waitingTime",
+                "timeLoss", "speed", "speedRelative", "CO2_abs", "fuel_abs", "CO2_perVeh"):
+        assert idle[col] is None, col
+    # Attributes SUMO did write keep their value, including real zeros.
+    assert idle["sampledSeconds"] == 0.0
+    assert idle["entered"] == 0 and idle["left"] == 0
+
+    used = con.execute("SELECT * FROM edge_metrics WHERE edge_id='e1'").fetchone()
+    assert used["speed"] == 12.0 and used["CO2_abs"] == 15000.0
+
+    # AVG() over the used edges only, and the slowest edge is a used one.
+    assert con.execute("SELECT AVG(speed) FROM edge_metrics").fetchone()[0] == 10.0
+    slowest = con.execute(
+        "SELECT edge_id FROM edge_metrics WHERE speed IS NOT NULL ORDER BY speed LIMIT 1"
+    ).fetchone()[0]
+    assert slowest == "e2"
+    assert con.execute("SELECT SUM(CO2_abs) FROM edge_metrics").fetchone()[0] == 31350.0
+    con.close()

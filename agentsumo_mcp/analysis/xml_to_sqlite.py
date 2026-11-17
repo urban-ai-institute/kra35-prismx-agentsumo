@@ -503,7 +503,12 @@ class XMLToSQLiteConverter:
                 for edge in elem.findall('edge'):
                     attrs = edge.attrib
 
-                    def safe_float(key, default=0.0):
+                    # SUMO omits attributes it cannot measure (e.g. speed,
+                    # traveltime, timeLoss on an edge no vehicle used, or the
+                    # whole edge in the excludeEmpty emission file). Store
+                    # those as NULL, not 0.0, so idle edges do not show up as
+                    # "speed 0" and do not dilute AVG().
+                    def safe_float(key, default=None):
                         val = attrs.get(key)
                         if val is None or val == '':
                             return default
@@ -512,7 +517,7 @@ class XMLToSQLiteConverter:
                         except (ValueError, TypeError):
                             return default
 
-                    def safe_int(key, default=0):
+                    def safe_int(key, default=None):
                         val = attrs.get(key)
                         if val is None or val == '':
                             return default
@@ -525,7 +530,7 @@ class XMLToSQLiteConverter:
                     edge_id = attrs.get('id', '')
                     em = emission_data.get(edge_id, {})
 
-                    def em_float(key, default=0.0):
+                    def em_float(key, default=None):
                         val = em.get(key)
                         if val is None or val == '':
                             return default
