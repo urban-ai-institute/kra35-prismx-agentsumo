@@ -405,10 +405,11 @@ class SimulationRunner:
         input_tag = SubElement(cfg_root, "input")
         SubElement(input_tag, "net-file", {"value": file_names["net_file"]})
 
-        if file_names["route_file"]:
-            SubElement(input_tag, "route-files", {"value": file_names["route_file"]})
-        elif file_names["trip_file"]:
-            SubElement(input_tag, "trip-files", {"value": file_names["trip_file"]})
+        # SUMO has no trip-files option: trips are loaded through route-files
+        # and routed at departure. A route file is still preferred.
+        route_files = file_names["route_file"] or file_names["trip_file"]
+        if route_files:
+            SubElement(input_tag, "route-files", {"value": route_files})
 
         # Additional files
         additional_files_list = [add_file, "vehicle_types.add.xml"]
